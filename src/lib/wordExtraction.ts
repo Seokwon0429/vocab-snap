@@ -2,6 +2,8 @@ const TYPOGRAPHIC_APOSTROPHES = /[\u2018\u2019\u201B\u02BC\u02BB\uFF07\u00B4`]/g
 const TYPOGRAPHIC_DASHES = /[\u00AD\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g;
 const TOKEN_CANDIDATE_PATTERN = /[\p{L}\p{N}]+(?:['-][\p{L}\p{N}]+)*/gu;
 const ENGLISH_WORD_PATTERN = /^[a-z]+(?:['-][a-z]+)*$/;
+const ENGLISH_FRAGMENT_PATTERN = /[a-z]+(?:['-][a-z]+)*/g;
+const ENGLISH_HANGUL_CANDIDATE_PATTERN = /^[a-z\p{Script=Hangul}'-]+$/u;
 
 const DEFAULT_ALLOWED_SHORT_WORDS = ['a', 'i'];
 
@@ -168,20 +170,36 @@ export function extractEnglishWords(
   const words: string[] = [];
 
   for (const candidate of candidates) {
-    const word = normalizeEnglishWord(candidate);
+    // Korean particles are often joined to an English word in mixed OCR
+    // (`apple을`, `well-known이라는`). Pull out only the intact ASCII fragment,
+    // but never partially accept number-mixed or other-script noise.
+    const wordCandidates = ENGLISH_WORD_PATTERN.test(candidate)
+      ? [candidate]
+      : ENGLISH_HANGUL_CANDIDATE_PATTERN.test(candidate)
+        ? candidate.match(ENGLISH_FRAGMENT_PATTERN) ?? []
+        : [];
 
-    if (!word || !isPlausibleEnglishWord(word, options)) {
+    if (wordCandidates.length === 0) {
       rejectedSet.add(candidate);
       continue;
     }
 
-    if (seen.has(word)) {
-      duplicateSet.add(word);
-      continue;
+    let acceptedFragment = false;
+    for (const fragment of wordCandidates) {
+      const word = normalizeEnglishWord(fragment);
+      if (!word || !isPlausibleEnglishWord(word, options)) continue;
+      acceptedFragment = true;
+
+      if (seen.has(word)) {
+        duplicateSet.add(word);
+        continue;
+      }
+
+      seen.add(word);
+      words.push(word);
     }
 
-    seen.add(word);
-    words.push(word);
+    if (!acceptedFragment) rejectedSet.add(candidate);
   }
 
   const partition = partitionExtractedWords(words, options.existingWords ?? []);

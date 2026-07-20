@@ -16,6 +16,7 @@
     "react": "latest",
     "react-dom": "latest",
     "lucide-react": "latest",
+    "nspell": "2.1.5",
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
@@ -24,6 +25,7 @@
     "@testing-library/jest-dom": "latest",
     "@testing-library/react": "latest",
     "@testing-library/user-event": "latest",
+    "@types/nspell": "2.1.6",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
@@ -32,6 +34,7 @@
     "eslint-plugin-react-refresh": "latest",
     "fake-indexeddb": "latest",
     "globals": "latest",
+    "dictionary-en": "4.0.0",
     "jsdom": "latest",
     "typescript": "^6.0.0",
     "typescript-eslint": "latest",
