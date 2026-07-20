@@ -111,6 +111,13 @@ function meaningFromEvidence(evidence: readonly OcrWordEvidence[]) {
   const parts: string[] = []
   let weightedConfidence = 0
   let characterCount = 0
+  const meaningTokenCandidates = evidence.flatMap((item) => {
+    const text = koreanTextFromEvidence(item)
+    if (!text || PART_OF_SPEECH_LABELS[normalizePosToken(text)]) return []
+    return text.split(/\s+/u).filter(Boolean)
+  })
+  const looksLikeCharacterSpacingError = meaningTokenCandidates.length >= 2
+    && meaningTokenCandidates.every((token) => token.length === 1)
 
   for (const item of evidence) {
     const text = koreanTextFromEvidence(item)
@@ -122,7 +129,10 @@ function meaningFromEvidence(evidence: readonly OcrWordEvidence[]) {
     }
 
     for (const token of text.split(/\s+/u)) {
-      if (!token || STANDALONE_PARTICLES.has(token)) continue
+      if (
+        !token
+        || (!looksLikeCharacterSpacingError && STANDALONE_PARTICLES.has(token))
+      ) continue
       meanings.push(token)
       weightedConfidence += item.confidence * token.length
       characterCount += token.length
@@ -395,6 +405,24 @@ function dictionarySenseAtoms(value: string): string[] {
     .filter(Boolean)
 }
 
+function compactKoreanSpacing(value: string): string {
+  return normalizeKoreanMeaning(value).replace(/\s+/gu, '')
+}
+
+/** Uses a matching dictionary sense only when OCR differs by whitespace alone. */
+export function correctOcrKoreanSpacing(
+  meaning: string,
+  dictionary: KoreanDictionaryEntry | undefined,
+): string {
+  const observed = normalizeKoreanMeaning(meaning)
+  if (!observed || !dictionary?.meaning.trim()) return meaning.trim()
+  const compactObserved = compactKoreanSpacing(observed)
+  const matchingSense = dictionarySenseAtoms(dictionary.meaning).find(
+    (sense) => compactKoreanSpacing(sense) === compactObserved,
+  )
+  return matchingSense ?? meaning.trim()
+}
+
 function meaningfulTokens(value: string): Set<string> {
   return new Set(
     hangulParts(value).filter(
@@ -409,7 +437,9 @@ export function compareOcrMeaningWithDictionary(
   dictionary: KoreanDictionaryEntry | undefined,
 ): OcrMeaningAgreement {
   if (!dictionary?.meaning.trim()) return 'uncertain'
-  const observed = normalizeKoreanMeaning(candidate.meaning)
+  const observed = normalizeKoreanMeaning(
+    correctOcrKoreanSpacing(candidate.meaning, dictionary),
+  )
   const senses = dictionarySenseAtoms(dictionary.meaning)
   if (senses.includes(observed)) {
     return candidate.layoutConfidence === 'strong' && candidate.confidence >= 75

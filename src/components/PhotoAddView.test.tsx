@@ -205,6 +205,23 @@ describe('사진 업로드', () => {
     expect(onWordsAdded).toHaveBeenCalledWith(1)
   })
 
+  it('사진 뜻이 글자 사이 띄어쓰기로 인식되면 사전 표기로 자동 보정한다', async () => {
+    recognizeMock.mockResolvedValue(vocabularyOcrResult('apple', '사 과'))
+    lookupMock.mockResolvedValue({
+      definitions: new Map([['apple', { meaning: '사과; 사과나무 열매', partOfSpeech: '명사' }]]),
+      unavailable: false,
+    })
+    const { container } = render(
+      <PhotoAddView entries={[]} onWordsAdded={vi.fn()} notify={vi.fn()} />,
+    )
+
+    await uploadAndRecognize(container)
+
+    expect(await screen.findByRole('textbox', { name: 'apple 한국어 뜻' })).toHaveValue('사과')
+    expect(screen.getByText('띄어쓰기 자동 보정·사전 일치')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'apple 선택' })).toBeChecked()
+  })
+
   it('사진 뜻을 사전과 확인하지 못하면 사용자가 선택하기 전까지 저장을 막는다', async () => {
     recognizeMock.mockResolvedValue(vocabularyOcrResult('apple', '바나나'))
     lookupMock.mockResolvedValue({
@@ -368,6 +385,64 @@ describe('사진 업로드', () => {
 
     expect(screen.getByDisplayValue('modern')).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'modern 선택' })).toBeChecked()
+  })
+
+  it('20% 미만 단어는 검토 화면에서 완전히 제외한다', async () => {
+    const result = mixedOcrResult('banana', 86)
+    result.text = 'banana apple'
+    result.words.push({
+      text: 'apple',
+      confidence: 19,
+      bbox: { x0: 50, y0: 1, x1: 95, y1: 20 },
+      alternatives: [],
+    })
+    recognizeMock.mockResolvedValue(result)
+    const { container } = render(
+      <PhotoAddView entries={[]} onWordsAdded={vi.fn()} notify={vi.fn()} />,
+    )
+
+    await uploadAndRecognize(container)
+
+    expect(await screen.findByDisplayValue('banana')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue('apple')).not.toBeInTheDocument()
+    expect(screen.getByText('20% 미만 1개 제외')).toBeInTheDocument()
+  })
+
+  it('40~49% 단어는 일반 후보 뒤의 별도 검토 영역에 표시한다', async () => {
+    const result = mixedOcrResult('banana', 86)
+    result.text = 'banana maybe'
+    result.words.push({
+      text: 'maybe',
+      confidence: 48,
+      bbox: { x0: 50, y0: 1, x1: 95, y1: 20 },
+      alternatives: [],
+    })
+    recognizeMock.mockResolvedValue(result)
+    const { container } = render(
+      <PhotoAddView entries={[]} onWordsAdded={vi.fn()} notify={vi.fn()} />,
+    )
+
+    await uploadAndRecognize(container)
+
+    const normalWord = await screen.findByDisplayValue('banana')
+    const divider = screen.getByText('낮은 인식률 후보 · 별도 검토')
+    const lowWord = screen.getByDisplayValue('maybe')
+    expect(normalWord.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(divider.compareDocumentPosition(lowWord) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByText(/40~49%는 철자를 확인/)).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'maybe 선택' })).toBeDisabled()
+  })
+
+  it('20~39% 단어는 별도 영역에서 오류 가능성이 매우 높다고 경고한다', async () => {
+    recognizeMock.mockResolvedValue(mixedOcrResult('maybe', 35))
+    const { container } = render(
+      <PhotoAddView entries={[]} onWordsAdded={vi.fn()} notify={vi.fn()} />,
+    )
+
+    await uploadAndRecognize(container)
+
+    expect(await screen.findByText('인식률이 매우 낮아요.')).toBeInTheDocument()
+    expect(screen.getByText('35%')).toHaveClass('is-critical')
   })
 
   it('교정 후보가 없어도 원문 유지를 명시하면 선택할 수 있다', async () => {
