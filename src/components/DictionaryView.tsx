@@ -99,6 +99,7 @@ export function DictionaryView({
   const [editing, setEditing] = useState<WordEntry | null | 'new'>(null)
   const [form, setForm] = useState<WordFormState>(emptyForm)
   const [saving, setSaving] = useState(false)
+  const [backfilling, setBackfilling] = useState(false)
   const [importMode, setImportMode] = useState<ImportMode>('merge')
   const [importing, setImporting] = useState(false)
   const [folders, setFolders] = useState<VocabularyFolder[]>([])
@@ -432,6 +433,53 @@ export function DictionaryView({
     }
   }
 
+  const fillMissingDefinitions = async () => {
+    const candidates = entries.filter(
+      (entry) => !entry.meaning.trim() || !entry.partOfSpeech.trim(),
+    )
+    if (candidates.length === 0) {
+      notify('빈 뜻이나 품사가 있는 단어가 없어요.', 'info')
+      return
+    }
+
+    setBackfilling(true)
+    try {
+      const enriched = await enrichWithKoreanDefinitions(candidates)
+      const changedEntries = enriched.entries.filter((entry, index) => {
+        const original = candidates[index]
+        return (
+          (entry.meaning ?? '') !== original.meaning
+          || (entry.partOfSpeech ?? '') !== original.partOfSpeech
+        )
+      })
+
+      await Promise.all(changedEntries.map((entry) => put(entry)))
+      if (changedEntries.length > 0) await onChanged()
+
+      const unmatchedCount = candidates.length - changedEntries.length
+      if (changedEntries.length > 0) {
+        const unmatchedMessage = unmatchedCount > 0
+          ? ` 사전에 없는 ${unmatchedCount}개는 그대로 두었어요.`
+          : ''
+        notify(
+          `${changedEntries.length}개 단어의 빈 뜻·품사를 채웠어요.${unmatchedMessage}`,
+          enriched.unavailable ? 'info' : 'success',
+        )
+      } else {
+        notify(
+          enriched.unavailable
+            ? '뜻 사전을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'
+            : '사전에서 채울 수 있는 단어를 찾지 못했어요.',
+          enriched.unavailable ? 'error' : 'info',
+        )
+      }
+    } catch {
+      notify('빈 뜻과 품사를 채우지 못했어요. 다시 시도해 주세요.', 'error')
+    } finally {
+      setBackfilling(false)
+    }
+  }
+
   const removeWords = async (ids: string[], label: string) => {
     if (ids.length === 0) return
     if (!window.confirm(`${label} 삭제할까요? 이 작업은 되돌릴 수 없어요.`)) return
@@ -495,9 +543,20 @@ export function DictionaryView({
           <h1 id="dictionary-title">내 단어장</h1>
           <p>사진에서 모은 단어를 나만의 설명과 함께 완성해 보세요.</p>
         </div>
-        <button type="button" className="button button-primary" onClick={() => openEditor()}>
-          <Plus size={18} aria-hidden="true" /> 직접 추가
-        </button>
+        <div className="dictionary-heading-actions">
+          <button
+            type="button"
+            className="button button-quiet"
+            onClick={() => void fillMissingDefinitions()}
+            disabled={backfilling || loading || entries.length === 0}
+          >
+            <BookOpen size={18} aria-hidden="true" />
+            {backfilling ? '자동 채우는 중…' : '빈 뜻·품사 채우기'}
+          </button>
+          <button type="button" className="button button-primary" onClick={() => openEditor()}>
+            <Plus size={18} aria-hidden="true" /> 직접 추가
+          </button>
+        </div>
       </div>
 
       <p className="sr-only" role="status" aria-live="polite">{folderAnnouncement}</p>
