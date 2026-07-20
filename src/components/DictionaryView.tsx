@@ -898,7 +898,7 @@ export function DictionaryView({
                         <span className="drag-handle" aria-hidden="true"><GripVertical size={15} /></span>
                         <div className="word-cell-copy">
                           <div className="word-cell-title">
-                            <strong lang="en" title={entry.word}>{entry.word}</strong>
+                            <strong lang="en">{entry.word}</strong>
                             <button type="button" className="speak-button" onClick={() => onSpeak(entry.word)} disabled={!speechAvailable} aria-label={`${entry.word} 발음 듣기`} title={speechAvailable ? '발음 듣기' : '기기에 설치된 영어 음성 없음'}>
                               <Volume2 size={16} aria-hidden="true" />
                             </button>
