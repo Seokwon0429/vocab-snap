@@ -25,6 +25,15 @@ describe('영어 단어 추출', () => {
     expect(result.rejected).toEqual(expect.arrayContaining(['w0rd', '123', 'llll', 'bcdfghjk']))
   })
 
+  it('한글 조사와 붙은 영어 단어를 분리하고 숫자 혼합은 부분 추출하지 않는다', () => {
+    const result = extractEnglishWords(
+      "이 페이지의 Apple을 읽고 well-known이라는 표현과 w0rd를 확인한다",
+    )
+
+    expect(result.words).toEqual(['apple', 'well-known'])
+    expect(result.rejected).toEqual(expect.arrayContaining(['w0rd를']))
+  })
+
   it('기존 단어장 항목을 신규 단어와 분리한다', () => {
     const result = extractEnglishWords('Apple orange ORANGE pear', {
       existingWords: ['apple', 'Pear'],

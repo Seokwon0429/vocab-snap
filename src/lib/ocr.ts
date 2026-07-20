@@ -92,6 +92,7 @@ export type OcrProgressStage =
   | 'preprocessing'
   | 'loading'
   | 'recognizing'
+  | 'selecting'
   | 'complete';
 
 export interface OcrProgress {
@@ -104,16 +105,52 @@ export interface OcrProgress {
   rawStatus?: string;
 }
 
-export interface RecognizeEnglishTextOptions {
+export type OcrAccuracyMode = 'standard' | 'accurate';
+export type OcrVariant = 'balanced' | 'high-contrast';
+
+export interface RecognizeImageTextOptions {
   maxFileSizeBytes?: number;
   preprocess?: Omit<PreprocessImageOptions, 'signal' | 'onProgress'>;
+  /** Accurate mode compares two locally preprocessed versions of the image. */
+  accuracyMode?: OcrAccuracyMode;
   signal?: AbortSignal;
   onProgress?: (progress: OcrProgress) => void;
+}
+
+/** @deprecated Use RecognizeImageTextOptions. */
+export type RecognizeEnglishTextOptions = RecognizeImageTextOptions;
+
+export interface OcrBoundingBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface OcrWordEvidence {
+  text: string;
+  confidence: number;
+  bbox: OcrBoundingBox;
+  alternatives: string[];
+}
+
+export interface OcrPassSummary {
+  variant: OcrVariant;
+  confidence: number;
+  weightedWordConfidence: number;
+  score: number;
+  wordCount: number;
+  characterCount: number;
 }
 
 export interface OcrResult {
   text: string;
   confidence: number;
+  words: OcrWordEvidence[];
+  selectedVariant: OcrVariant;
+  passes: OcrPassSummary[];
+  detectedKorean: boolean;
+  languages: readonly ['eng', 'kor'];
   sourceWidth: number;
   sourceHeight: number;
   processedWidth: number;
@@ -150,6 +187,29 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw cancelledError();
   }
+}
+
+function abortable<T>(task: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return task;
+  if (signal.aborted) return Promise.reject(cancelledError());
+
+  return new Promise<T>((resolve, reject) => {
+    const handleAbort = () => {
+      reject(cancelledError());
+    };
+
+    signal.addEventListener('abort', handleAbort, { once: true });
+    task.then(
+      (value) => {
+        signal.removeEventListener('abort', handleAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', handleAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function fileExtension(fileName: string): string {
@@ -484,60 +544,155 @@ export async function preprocessImage(
   }
 }
 
-function mapWorkerProgress(message: LoggerMessage): Omit<OcrProgress, 'percent'> {
+interface OcrWordLike {
+  text: string;
+  confidence: number;
+  bbox: OcrBoundingBox;
+  choices?: Array<{ text: string; confidence: number }>;
+}
+
+interface OcrBlockLike {
+  paragraphs: Array<{
+    lines: Array<{
+      words: OcrWordLike[];
+    }>;
+  }>;
+}
+
+interface OcrPassCandidate {
+  variant: OcrVariant;
+  text: string;
+  confidence: number;
+  words: OcrWordEvidence[];
+  characterCount: number;
+}
+
+export interface OcrPassQualityInput {
+  variant: OcrVariant;
+  confidence: number;
+  weightedWordConfidence: number;
+  wordCount: number;
+  characterCount: number;
+}
+
+/** Flattens only the lightweight word evidence needed by the review screen. */
+export function flattenOcrWords(blocks: OcrBlockLike[] | null | undefined): OcrWordEvidence[] {
+  if (!blocks) return [];
+
+  const words: OcrWordEvidence[] = [];
+  for (const block of blocks) {
+    for (const paragraph of block.paragraphs ?? []) {
+      for (const line of paragraph.lines ?? []) {
+        for (const word of line.words ?? []) {
+          const text = word.text?.trim();
+          if (!text) continue;
+
+          words.push({
+            text,
+            confidence: clamp(Number(word.confidence) || 0, 0, 100),
+            bbox: word.bbox,
+            alternatives: (word.choices ?? [])
+              .filter((choice) => choice.text && choice.text !== text)
+              .sort((left, right) => right.confidence - left.confidence)
+              .slice(0, 3)
+              .map((choice) => choice.text),
+          });
+        }
+      }
+    }
+  }
+
+  return words;
+}
+
+function weightedWordConfidence(words: readonly OcrWordEvidence[], pageConfidence: number): number {
+  let weightedTotal = 0;
+  let characterTotal = 0;
+
+  for (const word of words) {
+    const characters = word.text.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
+    weightedTotal += word.confidence * characters;
+    characterTotal += characters;
+  }
+
+  return characterTotal ? weightedTotal / characterTotal : clamp(pageConfidence, 0, 100);
+}
+
+/** Scores passes without trusting a single very confident but incomplete word. */
+export function scoreOcrPasses(
+  inputs: readonly OcrPassQualityInput[],
+): { selectedIndex: number; summaries: OcrPassSummary[] } {
+  const maximumCharacters = Math.max(1, ...inputs.map((input) => input.characterCount));
+  const summaries = inputs.map((input) => ({
+    ...input,
+    score: clamp(
+      input.weightedWordConfidence * 0.55
+        + input.confidence * 0.3
+        + (input.characterCount / maximumCharacters) * 15,
+      0,
+      100,
+    ),
+  }));
+
+  let selectedIndex = 0;
+  for (let index = 1; index < summaries.length; index += 1) {
+    if (summaries[index].score > summaries[selectedIndex].score + 0.01) {
+      selectedIndex = index;
+    }
+  }
+
+  return { selectedIndex, summaries };
+}
+
+function mapWorkerProgress(
+  message: LoggerMessage,
+  phase: 'loading' | 'recognizing',
+  passIndex: number,
+  passCount: number,
+): Omit<OcrProgress, 'percent'> {
   const rawProgress = clamp(message.progress ?? 0, 0, 1);
-  const status = message.status.toLocaleLowerCase('en-US');
 
-  if (status.includes('recognizing')) {
+  if (phase === 'recognizing') {
+    const ranges = passCount === 1
+      ? [[0.4, 0.98]]
+      : [[0.4, 0.66], [0.74, 0.95]];
+    const [start, end] = ranges[Math.min(passIndex, ranges.length - 1)];
+
     return {
-      progress: 0.5 + rawProgress * 0.49,
+      progress: start + rawProgress * (end - start),
       stage: 'recognizing',
-      message: '사진에서 영어를 읽고 있어요.',
-      rawStatus: message.status,
-    };
-  }
-
-  if (status.includes('language')) {
-    return {
-      progress: 0.24 + rawProgress * 0.18,
-      stage: 'loading',
-      message: '영어 인식 데이터를 준비하고 있어요.',
-      rawStatus: message.status,
-    };
-  }
-
-  if (status.includes('initializing api')) {
-    return {
-      progress: 0.42 + rawProgress * 0.08,
-      stage: 'loading',
-      message: '인식 엔진을 시작하고 있어요.',
+      message: passCount === 1
+        ? '사진에서 한국어와 영어를 읽고 있어요.'
+        : `${passIndex + 1}번째 보정 이미지에서 한·영 문자를 읽고 있어요.`,
       rawStatus: message.status,
     };
   }
 
   return {
-    progress: 0.12 + rawProgress * 0.12,
+    progress: 0.1 + rawProgress * 0.3,
     stage: 'loading',
-    message: '인식 엔진을 불러오고 있어요.',
+    message: '한국어·영어 인식 데이터를 준비하고 있어요.',
     rawStatus: message.status,
   };
 }
 
 /**
- * Runs English OCR in a Tesseract.js Web Worker. The supplied image is passed
- * directly to that local worker; this module never uploads it or its OCR text.
- * A fresh worker is always terminated in `finally`, including after aborts.
+ * Runs Korean + English OCR in one local Tesseract.js Web Worker. In accurate
+ * mode it compares two preprocessing strengths. No image or recognized text is
+ * uploaded, and the worker is always terminated in `finally`.
  */
-export async function recognizeEnglishText(
+export async function recognizeImageText(
   file: File,
-  options: RecognizeEnglishTextOptions = {},
+  options: RecognizeImageTextOptions = {},
 ): Promise<OcrResult> {
   assertValidImageFile(file, { maxSizeBytes: options.maxFileSizeBytes });
   throwIfAborted(options.signal);
 
   let worker: TesseractWorker | undefined;
   let terminationPromise: Promise<unknown> | undefined;
-  let phase: 'preprocessing' | 'loading' | 'recognizing' = 'preprocessing';
+  let phase: 'preprocessing' | 'loading' | 'recognizing' | 'selecting' = 'preprocessing';
+  const passCount = options.accuracyMode === 'standard' ? 1 : 2;
+  let passIndex = 0;
   let latestProgress = 0;
 
   const emitProgress = (event: Omit<OcrProgress, 'percent'>) => {
@@ -577,6 +732,8 @@ export async function recognizeEnglishText(
 
     const preprocessed = await preprocessImage(file, {
       ...options.preprocess,
+      maxPixels: options.preprocess?.maxPixels ?? 6_000_000,
+      contrast: options.preprocess?.contrast ?? 22,
       signal: options.signal,
       onProgress: (progress) => {
         emitProgress({
@@ -598,43 +755,140 @@ export async function recognizeEnglishText(
     const ocrAssetUrl = (relativePath: string) =>
       new URL(`ocr/${relativePath}`, document.baseURI).href;
 
-    worker = await createWorker('eng', OEM.LSTM_ONLY, {
+    worker = await createWorker(['eng', 'kor'], OEM.LSTM_ONLY, {
       workerPath: ocrAssetUrl('worker.min.js'),
       corePath: ocrAssetUrl('core'),
       langPath: ocrAssetUrl('lang'),
+      cachePath: 'vocab-snap-ocr-v2',
       gzip: true,
-      logger: (message) => emitProgress(mapWorkerProgress(message)),
+      logger: (message) => {
+        if (phase === 'loading' || phase === 'recognizing') {
+          emitProgress(mapWorkerProgress(message, phase, passIndex, passCount));
+        }
+      },
     });
 
     throwIfAborted(options.signal);
-    await worker.setParameters({
-      tessedit_pageseg_mode: PSM.AUTO,
-      preserve_interword_spaces: '1',
-      user_defined_dpi: '300',
-    });
+    await abortable(
+      worker.setParameters({
+        tessedit_pageseg_mode: PSM.AUTO,
+        preserve_interword_spaces: '1',
+        user_defined_dpi: '300',
+      }),
+      options.signal,
+    );
+
+    const candidates: OcrPassCandidate[] = [];
+    let firstRotation: number | null = null;
+    let lastRecognitionError: unknown;
+
+    const recognizeVariant = async (
+      image: PreprocessedImage,
+      variant: OcrVariant,
+      currentPassIndex: number,
+    ) => {
+      passIndex = currentPassIndex;
+      phase = 'recognizing';
+      const recognizeOptions = currentPassIndex > 0 && firstRotation !== null
+        ? { rotateRadians: firstRotation }
+        : { rotateAuto: true };
+      const result = await abortable(
+        worker!.recognize(
+          image.blob,
+          recognizeOptions,
+          { text: true, blocks: true },
+        ),
+        options.signal,
+      );
+      throwIfAborted(options.signal);
+
+      if (currentPassIndex === 0) firstRotation = result.data.rotateRadians;
+      const text = result.data.text.trim();
+      const words = flattenOcrWords(result.data.blocks);
+      const characterCount = text.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
+      candidates.push({
+        variant,
+        text,
+        confidence: clamp(result.data.confidence, 0, 100),
+        words,
+        characterCount,
+      });
+    };
+
+    try {
+      await recognizeVariant(preprocessed, 'balanced', 0);
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      lastRecognitionError = error;
+    }
+
+    if (passCount === 2) {
+      try {
+        phase = 'preprocessing';
+        emitProgress({
+          progress: 0.66,
+          stage: 'preprocessing',
+          message: '더 강한 대비로 한 번 더 선명하게 만들고 있어요.',
+        });
+        const highContrast = await preprocessImage(file, {
+          ...options.preprocess,
+          maxPixels: options.preprocess?.maxPixels ?? 6_000_000,
+          contrast: clamp((options.preprocess?.contrast ?? 22) + 32, -254, 254),
+          signal: options.signal,
+          onProgress: (progress) => {
+            emitProgress({
+              progress: 0.66 + progress * 0.08,
+              stage: 'preprocessing',
+              message: '더 강한 대비로 한 번 더 선명하게 만들고 있어요.',
+            });
+          },
+        });
+        await recognizeVariant(highContrast, 'high-contrast', 1);
+      } catch (error) {
+        if (options.signal?.aborted) throw error;
+        lastRecognitionError = error;
+      }
+    }
 
     throwIfAborted(options.signal);
-    phase = 'recognizing';
-    const result = await worker.recognize(preprocessed.blob, { rotateAuto: true });
-    throwIfAborted(options.signal);
-
-    const text = result.data.text.trim();
-    if (!text) {
+    const usableCandidates = candidates.filter((candidate) => candidate.text.length > 0);
+    if (usableCandidates.length === 0) {
+      if (lastRecognitionError && candidates.length === 0) throw lastRecognitionError;
       throw new OcrError(
         'no_text_detected',
-        '영어 문자를 찾지 못했습니다. 글자가 크고 선명하게 보이는 사진으로 다시 시도해 주세요.',
+        '한국어 또는 영어 문자를 찾지 못했습니다. 글자가 크고 선명한 사진으로 다시 시도해 주세요.',
       );
     }
+
+    phase = 'selecting';
+    emitProgress({
+      progress: 0.97,
+      stage: 'selecting',
+      message: '더 정확한 인식 결과를 고르고 있어요.',
+    });
+    const ranked = scoreOcrPasses(usableCandidates.map((candidate) => ({
+      variant: candidate.variant,
+      confidence: candidate.confidence,
+      weightedWordConfidence: weightedWordConfidence(candidate.words, candidate.confidence),
+      wordCount: candidate.words.length,
+      characterCount: candidate.characterCount,
+    })));
+    const selected = usableCandidates[ranked.selectedIndex];
 
     emitProgress({
       progress: 1,
       stage: 'complete',
-      message: '영어 인식이 끝났어요.',
+      message: '한국어·영어 인식과 비교가 끝났어요.',
     });
 
     return {
-      text,
-      confidence: result.data.confidence,
+      text: selected.text,
+      confidence: selected.confidence,
+      words: selected.words,
+      selectedVariant: selected.variant,
+      passes: ranked.summaries,
+      detectedKorean: /\p{Script=Hangul}/u.test(selected.text),
+      languages: ['eng', 'kor'],
       sourceWidth: preprocessed.sourceWidth,
       sourceHeight: preprocessed.sourceHeight,
       processedWidth: preprocessed.width,
@@ -652,7 +906,7 @@ export async function recognizeEnglishText(
     if (phase === 'loading') {
       throw new OcrError(
         'engine_load_failed',
-        '영어 인식 엔진을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+        '한·영 인식 엔진을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
         error,
       );
     }
@@ -667,7 +921,7 @@ export async function recognizeEnglishText(
 
     throw new OcrError(
       'recognition_failed',
-      '사진 인식 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.',
+      '한국어·영어 인식 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.',
       error,
     );
   } finally {
@@ -675,3 +929,6 @@ export async function recognizeEnglishText(
     await terminateWorker();
   }
 }
+
+/** @deprecated Kept for compatibility with earlier callers. */
+export const recognizeEnglishText = recognizeImageText;
