@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   ArrowDownAZ,
   BookOpen,
@@ -34,6 +34,7 @@ import {
 } from '../lib/db'
 import { downloadExport, parseImportFile } from '../lib/importExport'
 import { enrichWithKoreanDefinitions } from '../lib/koreanDictionary'
+import { calculateDictionaryColumnWidths } from '../lib/dictionaryLayout'
 import type { ToastKind } from './Toast'
 
 type SortKey = 'newest' | 'oldest' | 'word-asc' | 'word-desc'
@@ -57,6 +58,11 @@ interface WordFormState {
   partOfSpeech: string
   memo: string
   folderId: string
+}
+
+type DictionaryTableStyle = CSSProperties & {
+  '--word-column-width': string
+  '--memo-column-width': string
 }
 
 const emptyForm: WordFormState = {
@@ -189,6 +195,16 @@ export function DictionaryView({
       return right.createdAt.localeCompare(left.createdAt)
     })
   }, [activeFolderId, entries, query, sortKey, validFolderIds])
+
+  const dictionaryTableStyle = useMemo<DictionaryTableStyle>(() => {
+    const widths = calculateDictionaryColumnWidths(
+      filteredEntries.map((entry) => entry.word),
+    )
+    return {
+      '--word-column-width': `${widths.word}%`,
+      '--memo-column-width': `${widths.memo}%`,
+    }
+  }, [filteredEntries])
 
   useEffect(() => {
     const validIds = new Set(entries.map((entry) => entry.id))
@@ -845,7 +861,7 @@ export function DictionaryView({
           </div>
 
           <div className="word-table-wrap surface">
-            <table className="word-table">
+            <table className="word-table" style={dictionaryTableStyle}>
               <thead>
                 <tr>
                   <th scope="col" className="check-column">
@@ -882,7 +898,7 @@ export function DictionaryView({
                         <span className="drag-handle" aria-hidden="true"><GripVertical size={15} /></span>
                         <div className="word-cell-copy">
                           <div className="word-cell-title">
-                            <strong lang="en">{entry.word}</strong>
+                            <strong lang="en" title={entry.word}>{entry.word}</strong>
                             <button type="button" className="speak-button" onClick={() => onSpeak(entry.word)} disabled={!speechAvailable} aria-label={`${entry.word} 발음 듣기`} title={speechAvailable ? '발음 듣기' : '기기에 설치된 영어 음성 없음'}>
                               <Volume2 size={16} aria-hidden="true" />
                             </button>
