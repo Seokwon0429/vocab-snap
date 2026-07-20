@@ -29,6 +29,7 @@ import {
   type CorrectionSuggestion,
 } from '../lib/wordCorrection'
 import {
+  extractEnglishOcrCandidates,
   extractEnglishWords,
   isPlausibleEnglishWord,
   normalizeEnglishWord,
@@ -47,6 +48,8 @@ interface ReviewItem {
   originalWord: string
   selected: boolean
   repeatedInPhoto: boolean
+  recovered: boolean
+  requiresManualValidation: boolean
   confidence?: number
   suggestions: CorrectionSuggestion[]
   reviewState: 'clear' | 'pending' | 'kept' | 'corrected' | 'edited'
@@ -74,14 +77,18 @@ function makeReviewId(index: number) {
 function confidenceEvidenceForWords(evidence: readonly OcrWordEvidence[]) {
   const confidenceByWord = new Map<string, number>()
   const alternativesByWord = new Map<string, string[]>()
+  const occurrenceByWord = new Map<string, number>()
 
   for (const item of evidence) {
-    const recognized = extractEnglishWords(item.text).words
+    const recognized = extractEnglishOcrCandidates([item.text])
     for (const word of recognized) {
       confidenceByWord.set(word, Math.max(confidenceByWord.get(word) ?? 0, item.confidence))
+      if (!item.recoveredFromAlternatePass) {
+        occurrenceByWord.set(word, (occurrenceByWord.get(word) ?? 0) + 1)
+      }
       const alternatives = alternativesByWord.get(word) ?? []
       for (const rawAlternative of item.alternatives) {
-        for (const alternative of extractEnglishWords(rawAlternative).words) {
+        for (const alternative of extractEnglishOcrCandidates([rawAlternative])) {
           if (alternative !== word && !alternatives.includes(alternative)) alternatives.push(alternative)
         }
       }
@@ -89,7 +96,13 @@ function confidenceEvidenceForWords(evidence: readonly OcrWordEvidence[]) {
     }
   }
 
-  return { confidenceByWord, alternativesByWord }
+  const repeatedWords = new Set(
+    [...occurrenceByWord.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([word]) => word),
+  )
+
+  return { confidenceByWord, alternativesByWord, repeatedWords }
 }
 
 export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProps) {
@@ -170,8 +183,9 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
         onProgress: setProgress,
         accuracyMode: accurateRecognition ? 'accurate' : 'standard',
         preprocess: {
-          maxDimension: 2400,
-          minDimension: 1500,
+          // Use the existing 6 MP budget more effectively on tall page photos.
+          maxDimension: 4096,
+          minDimension: 1600,
           maxPixels: 6_000_000,
           grayscale: true,
           autoContrast: true,
@@ -182,7 +196,21 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
         existingWords,
         minLetters: 2,
       })
-      if (extracted.words.length === 0) {
+      const strictWords = new Set(extracted.words)
+      const reviewWords = [...extracted.words]
+      const reviewWordSet = new Set(reviewWords)
+      const recoveredCandidates = extractEnglishOcrCandidates(
+        [...(result.candidateTexts ?? [result.text]), ...result.words.map((word) => word.text)],
+        { minLetters: 2, maxDigits: 2 },
+      )
+      for (const candidate of recoveredCandidates) {
+        if (!reviewWordSet.has(candidate)) {
+          reviewWordSet.add(candidate)
+          reviewWords.push(candidate)
+        }
+      }
+
+      if (reviewWords.length === 0) {
         throw new OcrError(
           'no_text_detected',
           result.detectedKorean
@@ -190,13 +218,20 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
             : '저장할 만한 영어 단어를 찾지 못했어요. 글자가 더 선명한 사진으로 다시 시도해 주세요.',
         )
       }
-      const repeated = new Set(extracted.duplicateWords)
-      const { confidenceByWord, alternativesByWord } = confidenceEvidenceForWords(result.words)
+      const {
+        confidenceByWord,
+        alternativesByWord,
+        repeatedWords: repeatedEvidenceWords,
+      } = confidenceEvidenceForWords(result.words)
+      const repeated = new Set([
+        ...extracted.duplicateWords,
+        ...repeatedEvidenceWords,
+      ])
       let dictionarySuggestions = new Map<string, CorrectionSuggestion[]>()
 
       try {
         dictionarySuggestions = await suggestCorrectionsForWords(
-          extracted.words.map((word) => ({
+          reviewWords.map((word) => ({
             word,
             confidence: confidenceByWord.get(word),
           })),
@@ -217,8 +252,9 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
         detectedKorean: result.detectedKorean,
       })
       setReviewItems(
-        extracted.words.map((word, index) => {
+        reviewWords.map((word, index) => {
           const confidence = confidenceByWord.get(word)
+          const recovered = !strictWords.has(word)
           const suggestions = [
             ...(alternativesByWord.get(word) ?? []).map((alternative) => ({
               word: alternative,
@@ -227,10 +263,15 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
             ...(dictionarySuggestions.get(word) ?? []),
           ].filter((suggestion, suggestionIndex, all) => (
             suggestion.word !== word
+              && isPlausibleEnglishWord(suggestion.word)
               && all.findIndex((candidate) => candidate.word === suggestion.word) === suggestionIndex
           )).slice(0, 3)
           const needsReview = !existingWords.has(word)
-            && ((confidence !== undefined && confidence < LOW_CONFIDENCE_THRESHOLD) || suggestions.length > 0)
+            && (
+              recovered
+              || (confidence !== undefined && confidence < LOW_CONFIDENCE_THRESHOLD)
+              || suggestions.length > 0
+            )
 
           return {
             id: makeReviewId(index),
@@ -238,15 +279,22 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
             originalWord: word,
             selected: !existingWords.has(word) && !needsReview,
             repeatedInPhoto: repeated.has(word),
+            recovered,
+            requiresManualValidation: !isPlausibleEnglishWord(word),
             confidence,
             suggestions,
             reviewState: needsReview ? 'pending' : 'clear',
           }
         }),
       )
-      setLiveMessage('교정이 필요한 단어와 인식 신뢰도를 확인해 주세요.')
+      const recoveredCount = reviewWords.filter((word) => !strictWords.has(word)).length
+      setLiveMessage(
+        recoveredCount > 0
+          ? `다른 인식 결과와 불확실한 조각에서 ${recoveredCount}개 후보를 추가로 찾았어요.`
+          : '교정이 필요한 단어와 인식 신뢰도를 확인해 주세요.',
+      )
       notify(
-        `${extracted.words.length}개 단어를 찾았어요. 저장할 단어를 확인해 주세요.`,
+        `${reviewWords.length}개 영어 후보를 찾았어요. 저장할 단어를 확인해 주세요.`,
         'success',
       )
     } catch (recognitionError) {
@@ -267,7 +315,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
 
   const statusFor = (item: ReviewItem) => {
     const normalized = normalizeEnglishWord(item.word)
-    if (!isPlausibleEnglishWord(normalized)) return 'invalid' as const
+    if (item.requiresManualValidation || !isPlausibleEnglishWord(normalized)) return 'invalid' as const
     if (existingWords.has(normalized)) return 'existing' as const
     const sameWord = reviewItems.filter(
       (candidate) => normalizeEnglishWord(candidate.word) === normalized,
@@ -284,21 +332,54 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
   })
   const selectedCount = availableItems.filter((item) => item.selected).length
   const pendingCount = availableItems.filter((item) => item.reviewState === 'pending').length
+  const attentionCount = pendingCount + problemItems.length
+  const recoveredItemCount = reviewItems.filter((item) => item.recovered).length
+  const repeatedItemCount = reviewItems.filter((item) => item.repeatedInPhoto).length
   const bulkSelectableItems = availableItems.filter((item) => item.reviewState !== 'pending')
   const allAvailableSelected =
     bulkSelectableItems.length > 0 && bulkSelectableItems.every((item) => item.selected)
 
   const updateWord = (id: string, value: string) => {
     setReviewItems((current) =>
-      current.map((item) => (item.id === id ? {
-        ...item,
-        word: value,
-        selected: true,
-        suggestions: [],
-        reviewState: 'edited',
-      } : item)),
+      current.map((item) => {
+        if (item.id !== id) return item
+        const previousStatus = statusFor(item)
+        const needsValidation = item.requiresManualValidation
+          || previousStatus === 'invalid'
+          || previousStatus === 'review-duplicate'
+          || !isPlausibleEnglishWord(normalizeEnglishWord(value))
+
+        return {
+          ...item,
+          word: value,
+          selected: !needsValidation,
+          suggestions: [],
+          requiresManualValidation: needsValidation,
+          reviewState: needsValidation ? 'pending' : 'edited',
+        }
+      }),
     )
-    setLiveMessage('직접 수정한 단어를 선택했어요.')
+    setLiveMessage('수정한 철자를 확인해 주세요.')
+  }
+
+  const confirmEditedCandidate = (id: string) => {
+    const item = reviewItems.find((candidate) => candidate.id === id)
+    if (!item || !isPlausibleEnglishWord(normalizeEnglishWord(item.word))) {
+      setLiveMessage('저장할 수 있는 영어 단어 형태로 수정해 주세요.')
+      return
+    }
+
+    setReviewItems((current) => current.map((candidate) => (
+      candidate.id === id
+        ? {
+            ...candidate,
+            selected: true,
+            requiresManualValidation: false,
+            reviewState: 'edited',
+          }
+        : candidate
+    )))
+    setLiveMessage('직접 수정한 단어를 확인하고 선택했어요.')
   }
 
   const toggleWord = (id: string) => {
@@ -322,24 +403,36 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
   }
 
   const applySuggestion = (id: string, suggestion: string) => {
+    const validSuggestion = isPlausibleEnglishWord(normalizeEnglishWord(suggestion))
     setReviewItems((current) => current.map((item) => (
       item.id === id
         ? {
             ...item,
             word: suggestion,
-            selected: true,
+            selected: validSuggestion,
             suggestions: [],
-            reviewState: 'corrected',
+            requiresManualValidation: !validSuggestion,
+            reviewState: validSuggestion ? 'corrected' : 'pending',
           }
         : item
     )))
-    setLiveMessage(`${suggestion}으로 교정하고 선택했어요.`)
+    setLiveMessage(
+      validSuggestion
+        ? `${suggestion}으로 교정하고 선택했어요.`
+        : '추천 결과를 저장할 수 있는 영어 단어 형태로 다시 확인해 주세요.',
+    )
   }
 
   const keepOriginalWord = (id: string) => {
     setReviewItems((current) => current.map((item) => (
       item.id === id
-        ? { ...item, selected: true, suggestions: [], reviewState: 'kept' }
+        ? {
+            ...item,
+            selected: true,
+            suggestions: [],
+            requiresManualValidation: false,
+            reviewState: 'kept',
+          }
         : item
     )))
     setLiveMessage('인식된 원문을 그대로 유지하고 선택했어요.')
@@ -417,8 +510,15 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
           <div className="review-panel surface">
             <div className="review-toolbar">
               <div>
-                <h2>새로 추가할 단어</h2>
-                <p>{availableItems.length}개 저장 가능 · {pendingCount}개 확인 필요</p>
+                <h2>인식된 영어 후보</h2>
+                <p>고유 후보 {reviewItems.length}개 · 저장 가능 {availableItems.length}개 · 확인 필요 {attentionCount}개</p>
+                {recoveredItemCount > 0 || repeatedItemCount > 0 ? (
+                  <p className="review-detail-counts">
+                    {recoveredItemCount > 0 ? `추가 회수 ${recoveredItemCount}개` : null}
+                    {recoveredItemCount > 0 && repeatedItemCount > 0 ? ' · ' : null}
+                    {repeatedItemCount > 0 ? `반복 출현 ${repeatedItemCount}개는 한 번씩 표시` : null}
+                  </p>
+                ) : null}
               </div>
               <button type="button" className="button button-quiet compact-button" onClick={toggleAll} disabled={bulkSelectableItems.length === 0}>
                 {allAvailableSelected ? <X size={16} aria-hidden="true" /> : <CheckCheck size={16} aria-hidden="true" />}
@@ -459,6 +559,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                         {Math.round(item.confidence)}%
                       </span>
                     ) : null}
+                    {item.recovered ? <span className="mini-badge recovered-badge">추가 발견</span> : null}
                     {item.repeatedInPhoto ? <span className="mini-badge">여러 번 발견</span> : null}
                     <button type="button" className="icon-button danger" onClick={() => removeReviewItem(item.id)} aria-label={`${item.word} 결과에서 삭제`}>
                       <Trash2 size={17} aria-hidden="true" />
@@ -467,7 +568,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                   {item.reviewState === 'pending' ? (
                     <div className="correction-panel" role="group" aria-label={`${item.originalWord} 교정`}>
                       <div id={`correction-help-${item.id}`} className="correction-copy">
-                        <strong>인식이 불확실해요.</strong>
+                        <strong>{item.recovered ? '다른 인식 결과에서 추가로 발견했어요.' : '인식이 불확실해요.'}</strong>
                         <span>추천 단어를 누르거나 원문을 확인해 주세요.</span>
                       </div>
                       <div className="correction-suggestions">
@@ -510,8 +611,8 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
             ) : null}
 
             {problemItems.length > 0 ? (
-              <details className="duplicate-section warning-section">
-                <summary>수정이 필요한 항목 <span>{problemItems.length}</span></summary>
+              <details className="duplicate-section warning-section" open>
+                <summary>추가 확인이 필요한 후보 <span>{problemItems.length}</span></summary>
                 <div className="review-word-list problem-list">
                   {problemItems.map((item) => (
                     <div className="review-word-row" key={item.id}>
@@ -519,7 +620,31 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                         <Pencil size={15} aria-hidden="true" />
                         <input value={item.word} onChange={(event) => updateWord(item.id, event.target.value)} aria-label={`${item.originalWord} 단어 수정`} lang="en" spellCheck={false} />
                       </div>
+                      {item.suggestions.map((suggestion) => (
+                        <button
+                          type="button"
+                          className="correction-button suggestion confirm-edit-button"
+                          key={suggestion.word}
+                          onClick={() => applySuggestion(item.id, suggestion.word)}
+                          aria-label={`${item.originalWord}를 ${suggestion.word}로 수정`}
+                        >
+                          혹시 <span lang="en">{suggestion.word}</span>?
+                        </button>
+                      ))}
+                      {item.confidence !== undefined ? (
+                        <span className="confidence-badge is-low">{Math.round(item.confidence)}%</span>
+                      ) : null}
+                      {item.recovered ? <span className="mini-badge recovered-badge">추가 발견</span> : null}
                       <span className="validation-label">{statusFor(item) === 'invalid' ? '영문 단어 확인' : '검토 목록 중복'}</span>
+                      <button
+                        type="button"
+                        className="correction-button confirm-edit-button"
+                        disabled={!isPlausibleEnglishWord(normalizeEnglishWord(item.word))}
+                        onClick={() => confirmEditedCandidate(item.id)}
+                        aria-label={`${item.originalWord} 수정 확인`}
+                      >
+                        수정 확인
+                      </button>
                       <button type="button" className="icon-button danger" onClick={() => removeReviewItem(item.id)} aria-label={`${item.word} 결과에서 삭제`}><Trash2 size={17} aria-hidden="true" /></button>
                     </div>
                   ))}
@@ -606,7 +731,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
               />
               <span>
                 <strong>정밀 인식</strong>
-                <small>두 가지 보정 결과를 비교해요. 조금 더 걸릴 수 있어요.</small>
+                <small>페이지 방식과 보정을 달리해 찾은 단어 후보를 합쳐요. 조금 더 걸릴 수 있어요.</small>
               </span>
             </label>
           ) : null}
@@ -647,7 +772,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
         <div className="section-heading"><span className="eyebrow">HOW IT WORKS</span><h2 id="how-title">세 단계면 충분해요</h2></div>
         <ol className="steps-grid">
           <li><span className="step-number">01</span><div className="step-icon"><Camera size={22} /></div><h3>사진 선택</h3><p>문장이나 단어가 보이는 사진을 고릅니다.</p></li>
-          <li><span className="step-number">02</span><div className="step-icon"><ScanText size={22} /></div><h3>한·영 혼합 인식</h3><p>두 가지 보정 결과를 비교하고 영어 단어를 찾아냅니다.</p></li>
+          <li><span className="step-number">02</span><div className="step-icon"><ScanText size={22} /></div><h3>한·영 혼합 인식</h3><p>페이지 전체를 서로 다른 방식으로 읽고 영어 후보를 합칩니다.</p></li>
           <li><span className="step-number">03</span><div className="step-icon"><BookOpenIcon /></div><h3>확인 후 저장</h3><p>필요한 단어를 고쳐 골라서 단어장에 담습니다.</p></li>
         </ol>
       </div>

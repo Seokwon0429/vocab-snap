@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { recognizeImageText } from '../lib/ocr'
+import { recognizeImageText, type OcrResult } from '../lib/ocr'
 import { suggestCorrectionsForWords } from '../lib/wordCorrection'
 import { PhotoAddView } from './PhotoAddView'
 
@@ -31,7 +31,7 @@ beforeEach(() => {
   correctionMock.mockResolvedValue(new Map())
 })
 
-function mixedOcrResult(word = 'rnodern', confidence = 55) {
+function mixedOcrResult(word = 'rnodern', confidence = 55): OcrResult {
   return {
     text: `한국어 설명 ${word} 단어`,
     confidence: 81,
@@ -140,5 +140,72 @@ describe('사진 업로드', () => {
 
     expect(screen.getByDisplayValue('vocab')).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'vocab 선택' })).toBeChecked()
+  })
+
+  it('선택된 문장에는 없지만 다른 OCR 원문에 있는 후보도 확인 항목으로 표시한다', async () => {
+    const result = mixedOcrResult('apple', 94)
+    result.candidateTexts = [result.text, 'banana']
+    recognizeMock.mockResolvedValue(result)
+    const { container } = render(
+      <PhotoAddView entries={[]} onWordsAdded={vi.fn()} notify={vi.fn()} />,
+    )
+
+    await uploadAndRecognize(container)
+
+    expect(await screen.findByDisplayValue('banana')).toBeInTheDocument()
+    const checkbox = screen.getByRole('checkbox', { name: 'banana 선택' })
+    expect(checkbox).not.toBeChecked()
+    expect(checkbox).toBeDisabled()
+    expect(screen.getByText(/추가 회수 1개/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '원문 유지' }))
+    expect(screen.getByRole('checkbox', { name: 'banana 선택' })).toBeChecked()
+  })
+
+  it('숫자가 섞여 엄격한 필터에서 빠진 OCR 조각도 직접 고칠 수 있게 노출한다', async () => {
+    const result = mixedOcrResult('apple', 94)
+    result.words.push({
+      text: 'w0rd',
+      confidence: 48,
+      bbox: { x0: 50, y0: 1, x1: 95, y1: 20 },
+      alternatives: [],
+    })
+    recognizeMock.mockResolvedValue(result)
+    const { container } = render(
+      <PhotoAddView entries={[]} onWordsAdded={vi.fn()} notify={vi.fn()} />,
+    )
+
+    await uploadAndRecognize(container)
+
+    const candidate = await screen.findByDisplayValue('w0rd')
+    expect(screen.getByText('추가 확인이 필요한 후보')).toBeInTheDocument()
+    await userEvent.clear(candidate)
+    await userEvent.type(candidate, 'word')
+    expect(candidate).toHaveValue('word')
+    await userEvent.click(screen.getByRole('button', { name: 'w0rd 수정 확인' }))
+
+    expect(screen.getByRole('checkbox', { name: 'word 선택' })).toBeChecked()
+  })
+
+  it('같은 위치의 다른 패스가 제안한 정상 단어를 불확실 조각에 적용한다', async () => {
+    const result = mixedOcrResult('apple', 94)
+    result.words.push({
+      text: 'w0rd',
+      confidence: 48,
+      bbox: { x0: 50, y0: 1, x1: 95, y1: 20 },
+      alternatives: ['word'],
+      recoveredFromAlternatePass: true,
+    })
+    recognizeMock.mockResolvedValue(result)
+    const { container } = render(
+      <PhotoAddView entries={[]} onWordsAdded={vi.fn()} notify={vi.fn()} />,
+    )
+
+    await uploadAndRecognize(container)
+    await screen.findByDisplayValue('w0rd')
+    await userEvent.click(screen.getByRole('button', { name: 'w0rd를 word로 수정' }))
+
+    expect(screen.getByDisplayValue('word')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'word 선택' })).toBeChecked()
   })
 })

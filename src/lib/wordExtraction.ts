@@ -4,6 +4,7 @@ const TOKEN_CANDIDATE_PATTERN = /[\p{L}\p{N}]+(?:['-][\p{L}\p{N}]+)*/gu;
 const ENGLISH_WORD_PATTERN = /^[a-z]+(?:['-][a-z]+)*$/;
 const ENGLISH_FRAGMENT_PATTERN = /[a-z]+(?:['-][a-z]+)*/g;
 const ENGLISH_HANGUL_CANDIDATE_PATTERN = /^[a-z\p{Script=Hangul}'-]+$/u;
+const OCR_REVIEW_CANDIDATE_PATTERN = /[a-z0-9]+(?:['-][a-z0-9]+)*/g;
 
 const DEFAULT_ALLOWED_SHORT_WORDS = ['a', 'i'];
 
@@ -17,6 +18,11 @@ export interface WordFilterOptions {
 
 export interface WordExtractionOptions extends WordFilterOptions {
   existingWords?: Iterable<string>;
+}
+
+export interface OcrReviewCandidateOptions extends WordFilterOptions {
+  /** Digit-heavy codes are ignored, while common OCR confusions such as w0rd remain visible. */
+  maxDigits?: number;
 }
 
 export interface WordPartition {
@@ -53,6 +59,48 @@ export function normalizeEnglishWord(value: string): string {
   }
 
   return matches[0];
+}
+
+/**
+ * Recovers English-looking OCR tokens for the confirmation screen without
+ * treating them as valid words. This deliberately keeps a small amount of
+ * likely noise (for example `w0rd` or a long vowel-free token) so the learner
+ * can fix or remove it instead of losing it before review.
+ */
+export function extractEnglishOcrCandidates(
+  values: Iterable<string>,
+  options: OcrReviewCandidateOptions = {},
+): string[] {
+  const minLetters = Math.max(1, Math.floor(options.minLetters ?? 2));
+  const maxLetters = Math.max(minLetters, Math.floor(options.maxLetters ?? 45));
+  const maxDigits = Math.max(0, Math.floor(options.maxDigits ?? 2));
+  const allowedShortWords = normalizedAllowedShortWords(options);
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+
+  for (const value of values) {
+    const matches = normalizeEnglishText(value).match(OCR_REVIEW_CANDIDATE_PATTERN) ?? [];
+    for (const candidate of matches) {
+      const letterCount = candidate.match(/[a-z]/g)?.length ?? 0;
+      const digitCount = candidate.match(/[0-9]/g)?.length ?? 0;
+      const separatorCount = candidate.match(/['-]/g)?.length ?? 0;
+
+      if (
+        (letterCount < minLetters && !allowedShortWords.has(candidate))
+        || letterCount > maxLetters
+        || digitCount > maxDigits
+        || separatorCount > 3
+        || seen.has(candidate)
+      ) {
+        continue;
+      }
+
+      seen.add(candidate);
+      candidates.push(candidate);
+    }
+  }
+
+  return candidates;
 }
 
 function normalizedAllowedShortWords(options: WordFilterOptions): Set<string> {

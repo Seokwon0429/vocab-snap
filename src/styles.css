@@ -1096,6 +1096,11 @@ main {
   font-size: 11px;
 }
 
+.review-toolbar .review-detail-counts {
+  color: #7a6b43;
+  font-weight: 700;
+}
+
 .review-word-list {
   display: grid;
   padding: 10px 0;
@@ -1285,6 +1290,11 @@ main {
   font-weight: 750;
 }
 
+.mini-badge.recovered-badge {
+  color: #625688;
+  background: #eeeaf8;
+}
+
 .correction-button.suggestion {
   border-color: #c9dbce;
   color: var(--green-dark);
@@ -1304,6 +1314,12 @@ main {
 .correction-button:focus-visible {
   outline: 3px solid rgba(231, 127, 92, 0.4);
   outline-offset: 2px;
+}
+
+.confirm-edit-button {
+  min-height: 32px;
+  padding-inline: 9px;
+  white-space: nowrap;
 }
 
 .validation-label {
@@ -1389,6 +1405,15 @@ main {
 
 .problem-list {
   padding-bottom: 0;
+}
+
+.problem-list .review-word-row {
+  flex-wrap: wrap;
+}
+
+.problem-list .editable-word {
+  min-width: 150px;
+  flex-basis: 210px;
 }
 
 .review-actions {
