@@ -33,4 +33,20 @@ describe('IndexedDB 단어장', () => {
     expect(await deleteMany([entry.id])).toBe(1)
     expect(await getAll()).toEqual([])
   })
+
+  it('앱 내부 개수 제한 없이 많은 단어를 한 번에 저장한다', async () => {
+    const inputs = Array.from({ length: 1_000 }, (_, index) => ({
+      word: `vocabulary-${String.fromCharCode(
+        97 + Math.floor(index / (26 * 26)),
+        97 + Math.floor(index / 26) % 26,
+        97 + index % 26,
+      )}`,
+    }))
+
+    const result = await addMany(inputs)
+
+    expect(result.added).toHaveLength(1_000)
+    expect(result.duplicates).toEqual([])
+    expect(await getAll()).toHaveLength(1_000)
+  })
 })

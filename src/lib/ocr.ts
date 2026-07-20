@@ -132,6 +132,8 @@ export interface OcrWordEvidence {
   confidence: number;
   bbox: OcrBoundingBox;
   alternatives: string[];
+  /** True when this word box appeared only in a non-selected accurate-mode pass. */
+  recoveredFromAlternatePass?: boolean;
 }
 
 export interface OcrPassSummary {
@@ -145,6 +147,8 @@ export interface OcrPassSummary {
 
 export interface OcrResult {
   text: string;
+  /** Selected text first, followed by other successful pass texts for review-only recovery. */
+  candidateTexts?: readonly string[];
   confidence: number;
   words: OcrWordEvidence[];
   selectedVariant: OcrVariant;
@@ -345,13 +349,13 @@ async function decodeImage(blob: Blob, signal?: AbortSignal): Promise<DecodedIma
   return loadHtmlImage(blob, signal);
 }
 
-function calculateTargetSize(
+export function calculateTargetSize(
   sourceWidth: number,
   sourceHeight: number,
   options: PreprocessImageOptions,
 ): { width: number; height: number } {
-  const maxDimension = Math.max(320, options.maxDimension ?? 2400);
-  const minDimension = clamp(options.minDimension ?? 1400, 0, maxDimension);
+  const maxDimension = Math.max(320, options.maxDimension ?? 4096);
+  const minDimension = clamp(options.minDimension ?? 1600, 0, maxDimension);
   const maxPixels = Math.max(1_000_000, options.maxPixels ?? 6_000_000);
   const longestEdge = Math.max(sourceWidth, sourceHeight);
 
@@ -605,6 +609,94 @@ export function flattenOcrWords(blocks: OcrBlockLike[] | null | undefined): OcrW
   return words;
 }
 
+function boundingBoxIntersectionRatio(
+  left: OcrBoundingBox,
+  right: OcrBoundingBox,
+): number {
+  const intersectionWidth = Math.max(0, Math.min(left.x1, right.x1) - Math.max(left.x0, right.x0));
+  const intersectionHeight = Math.max(0, Math.min(left.y1, right.y1) - Math.max(left.y0, right.y0));
+  const intersection = intersectionWidth * intersectionHeight;
+  if (intersection <= 0) return 0;
+
+  const leftArea = Math.max(1, (left.x1 - left.x0) * (left.y1 - left.y0));
+  const rightArea = Math.max(1, (right.x1 - right.x0) * (right.y1 - right.y0));
+  return intersection / Math.min(leftArea, rightArea);
+}
+
+function boundingBoxArea(box: OcrBoundingBox): number {
+  return Math.max(1, (box.x1 - box.x0) * (box.y1 - box.y0));
+}
+
+function comparableOcrText(text: string): string {
+  return text
+    .normalize('NFKC')
+    .replace(/[\u2018\u2019\u201B\u02BC\u02BB\uFF07\u00B4`]/g, "'")
+    .replace(/[\u00AD\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    .trim()
+    .toLocaleLowerCase('en-US');
+}
+
+/**
+ * Keeps the selected pass as the source of truth while recovering word boxes
+ * found only by another pass. Text recognized at the same location becomes a
+ * correction alternative instead of a duplicate review row.
+ */
+export function consolidateOcrWordEvidence(
+  selectedWords: readonly OcrWordEvidence[],
+  alternateWords: readonly OcrWordEvidence[],
+): OcrWordEvidence[] {
+  const consolidated = selectedWords.map((word) => ({
+    ...word,
+    alternatives: [...word.alternatives],
+    recoveredFromAlternatePass: false,
+  }));
+  const matchedSelectedIndices = new Set<number>();
+
+  for (const alternate of alternateWords) {
+    let matchingIndex = -1;
+    let bestOverlap = 0;
+    for (let index = 0; index < consolidated.length; index += 1) {
+      if (matchedSelectedIndices.has(index)) continue;
+      const overlap = boundingBoxIntersectionRatio(consolidated[index].bbox, alternate.bbox);
+      const selectedArea = boundingBoxArea(consolidated[index].bbox);
+      const alternateArea = boundingBoxArea(alternate.bbox);
+      const areaRatio = Math.max(selectedArea, alternateArea) / Math.min(selectedArea, alternateArea);
+      if (overlap >= 0.55 && areaRatio <= 1.6 && overlap > bestOverlap) {
+        matchingIndex = index;
+        bestOverlap = overlap;
+      }
+    }
+
+    if (matchingIndex < 0) {
+      consolidated.push({
+        ...alternate,
+        alternatives: [...alternate.alternatives],
+        recoveredFromAlternatePass: true,
+      });
+      continue;
+    }
+
+    const matched = consolidated[matchingIndex];
+    matchedSelectedIndices.add(matchingIndex);
+    const matchedText = comparableOcrText(matched.text);
+    const alternateText = comparableOcrText(alternate.text);
+    if (matchedText === alternateText) {
+      matched.confidence = Math.max(matched.confidence, alternate.confidence);
+    }
+
+    const alternatives = [alternate.text, ...alternate.alternatives, ...matched.alternatives];
+    const seenAlternatives = new Set<string>();
+    matched.alternatives = alternatives.filter((text) => {
+      const comparable = comparableOcrText(text);
+      if (!comparable || comparable === matchedText || seenAlternatives.has(comparable)) return false;
+      seenAlternatives.add(comparable);
+      return true;
+    }).slice(0, 3);
+  }
+
+  return consolidated;
+}
+
 function weightedWordConfidence(words: readonly OcrWordEvidence[], pageConfidence: number): number {
   let weightedTotal = 0;
   let characterTotal = 0;
@@ -789,6 +881,12 @@ export async function recognizeImageText(
     ) => {
       passIndex = currentPassIndex;
       phase = 'recognizing';
+      await abortable(
+        worker!.setParameters({
+          tessedit_pageseg_mode: currentPassIndex === 0 ? PSM.AUTO : PSM.SPARSE_TEXT,
+        }),
+        options.signal,
+      );
       const recognizeOptions = currentPassIndex > 0 && firstRotation !== null
         ? { rotateRadians: firstRotation }
         : { rotateAuto: true };
@@ -874,6 +972,10 @@ export async function recognizeImageText(
       characterCount: candidate.characterCount,
     })));
     const selected = usableCandidates[ranked.selectedIndex];
+    const alternateWords = usableCandidates.flatMap((candidate, index) => (
+      index === ranked.selectedIndex ? [] : candidate.words
+    ));
+    const consolidatedWords = consolidateOcrWordEvidence(selected.words, alternateWords);
 
     emitProgress({
       progress: 1,
@@ -883,11 +985,17 @@ export async function recognizeImageText(
 
     return {
       text: selected.text,
+      candidateTexts: [
+        selected.text,
+        ...usableCandidates
+          .filter((_, index) => index !== ranked.selectedIndex)
+          .map((candidate) => candidate.text),
+      ],
       confidence: selected.confidence,
-      words: selected.words,
+      words: consolidatedWords,
       selectedVariant: selected.variant,
       passes: ranked.summaries,
-      detectedKorean: /\p{Script=Hangul}/u.test(selected.text),
+      detectedKorean: usableCandidates.some((candidate) => /\p{Script=Hangul}/u.test(candidate.text)),
       languages: ['eng', 'kor'],
       sourceWidth: preprocessed.sourceWidth,
       sourceHeight: preprocessed.sourceHeight,

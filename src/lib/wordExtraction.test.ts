@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { extractEnglishWords, normalizeEnglishWord } from './wordExtraction'
+import {
+  extractEnglishOcrCandidates,
+  extractEnglishWords,
+  normalizeEnglishWord,
+} from './wordExtraction'
 
 describe('영어 단어 추출', () => {
   it('아포스트로피와 유니코드 하이픈을 보존하고 대소문자 중복을 합친다', () => {
@@ -46,5 +50,23 @@ describe('영어 단어 추출', () => {
   it('한 단어가 아닌 수정 문자열을 거부한다', () => {
     expect(normalizeEnglishWord('two words')).toBe('')
     expect(normalizeEnglishWord("O’Reilly")).toBe("o'reilly")
+  })
+
+  it('엄격한 필터에서 빠진 영어형 OCR 조각을 검토 후보로 복구한다', () => {
+    const candidates = extractEnglishOcrCandidates([
+      'Useful w0rd bcdfghjk h3ll0 123 abc123',
+      "Apple을 well-known이라는 I a",
+    ])
+
+    expect(candidates).toEqual([
+      'useful',
+      'w0rd',
+      'bcdfghjk',
+      'h3ll0',
+      'apple',
+      'well-known',
+      'i',
+      'a',
+    ])
   })
 })
