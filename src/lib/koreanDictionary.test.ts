@@ -45,6 +45,41 @@ describe('오프라인 한글 뜻 사전', () => {
     expect(result.entries[1]).toMatchObject({ meaning: '직접 입력한 뜻', partOfSpeech: '내 품사' })
   })
 
+  it('원본 사전에 없는 자주 쓰는 단어는 내장 보완 사전에서 찾는다', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('정적 청크를 읽으면 안 됩니다.'))
+    vi.stubGlobal('fetch', fetchMock)
+    const missingWords = [
+      'exposure',
+      'expressed',
+      'extrovert',
+      'illogical',
+      'combination',
+      'composition',
+      'disability',
+      'disarray',
+      'disillusioned',
+      'dismount',
+      'disputable',
+      'enable',
+      'encouraging',
+      'enhance',
+    ]
+
+    const result = await lookupKoreanDefinitions(missingWords)
+
+    expect(result.unavailable).toBe(false)
+    expect(result.definitions.size).toBe(missingWords.length)
+    expect(result.definitions.get('exposure')).toEqual({
+      meaning: '노출; 폭로; 사진의 노출',
+      partOfSpeech: '명사',
+    })
+    expect(result.definitions.get('encouraging')).toEqual({
+      meaning: '격려하는; 고무적인',
+      partOfSpeech: '형용사',
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('사전 파일을 읽지 못해도 빈 값으로 저장할 수 있게 한다', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
 

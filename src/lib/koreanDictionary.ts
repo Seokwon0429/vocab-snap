@@ -1,5 +1,6 @@
 import type { WordEntryInput } from '../types'
 import { normalizeWord } from './db'
+import { koreanDictionarySupplement } from './koreanDictionarySupplement'
 
 interface CompactDictionaryEntry {
   m: string
@@ -78,14 +79,19 @@ export async function lookupKoreanDefinitions(
 ): Promise<{ definitions: Map<string, KoreanDictionaryEntry>; unavailable: boolean }> {
   const normalizedWords = [...new Set(words.map(normalizeWord).filter(Boolean))]
   const groups = new Map<string, string[]>()
+  const definitions = new Map<string, KoreanDictionaryEntry>()
 
   for (const word of normalizedWords) {
+    const supplemental = koreanDictionarySupplement[word]
+    if (supplemental) {
+      definitions.set(word, { ...supplemental })
+      continue
+    }
     const key = chunkKey(word)
     if (!key) continue
     groups.set(key, [...(groups.get(key) ?? []), word])
   }
 
-  const definitions = new Map<string, KoreanDictionaryEntry>()
   let unavailable = false
 
   await Promise.all(
