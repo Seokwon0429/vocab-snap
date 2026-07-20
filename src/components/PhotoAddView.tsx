@@ -17,7 +17,11 @@ import {
 } from 'lucide-react'
 import type { WordEntry } from '../types'
 import { addMany } from '../lib/db'
-import { enrichWithKoreanDefinitions } from '../lib/koreanDictionary'
+import {
+  enrichWithKoreanDefinitions,
+  lookupKoreanDefinitions,
+  type KoreanDictionaryEntry,
+} from '../lib/koreanDictionary'
 import {
   OcrError,
   recognizeImageText,
@@ -25,6 +29,12 @@ import {
   type OcrProgress,
   type OcrWordEvidence,
 } from '../lib/ocr'
+import {
+  compareOcrMeaningWithDictionary,
+  findCrossSwappedMeaningWords,
+  pairOcrLinesWithKoreanMeanings,
+  type OcrMeaningCandidate,
+} from '../lib/ocrMeaningPairing'
 import {
   suggestCorrectionsForWords,
   type CorrectionSuggestion,
@@ -54,6 +64,21 @@ interface ReviewItem {
   confidence?: number
   suggestions: CorrectionSuggestion[]
   reviewState: 'clear' | 'pending' | 'kept' | 'corrected' | 'edited'
+  meaning: string
+  partOfSpeech: string
+  dictionaryMeaning: string
+  dictionaryPartOfSpeech: string
+  meaningCandidate?: OcrMeaningCandidate
+  meaningEditedByUser: boolean
+  meaningState:
+    | 'exact'
+    | 'related'
+    | 'uncertain'
+    | 'mismatch'
+    | 'dictionary'
+    | 'confirmed'
+    | 'edited'
+    | 'empty'
 }
 
 interface RecognitionSummary {
@@ -73,6 +98,104 @@ const initialProgress: OcrProgress = {
 
 function makeReviewId(index: number) {
   return `${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`
+}
+
+type MeaningReviewFields = Pick<
+  ReviewItem,
+  | 'meaning'
+  | 'partOfSpeech'
+  | 'dictionaryMeaning'
+  | 'dictionaryPartOfSpeech'
+  | 'meaningCandidate'
+  | 'meaningState'
+>
+
+function meaningReviewForWord(
+  word: string,
+  candidate: OcrMeaningCandidate | undefined,
+  dictionary: KoreanDictionaryEntry | undefined,
+  mismatch = false,
+): MeaningReviewFields {
+  const dictionaryMeaning = dictionary?.meaning.trim() ?? ''
+  const dictionaryPartOfSpeech = dictionary?.partOfSpeech.trim() ?? ''
+  if (candidate?.meaning.trim()) {
+    const photographedParts = new Set(candidate.partOfSpeech.split('·').filter(Boolean))
+    const dictionaryParts = new Set(dictionaryPartOfSpeech.split('·').filter(Boolean))
+    const partOfSpeechConflict = photographedParts.size > 0
+      && dictionaryParts.size > 0
+      && ![...photographedParts].some((part) => dictionaryParts.has(part))
+    const agreement = mismatch
+      ? 'mismatch'
+      : partOfSpeechConflict
+        ? 'uncertain'
+        : compareOcrMeaningWithDictionary(
+            { ...candidate, word: normalizeEnglishWord(word) },
+            dictionary,
+          )
+    return {
+      meaning: candidate.meaning.trim(),
+      partOfSpeech: candidate.partOfSpeech.trim() || dictionaryPartOfSpeech,
+      dictionaryMeaning,
+      dictionaryPartOfSpeech,
+      meaningCandidate: candidate,
+      meaningState: agreement,
+    }
+  }
+  if (dictionaryMeaning) {
+    return {
+      meaning: dictionaryMeaning,
+      partOfSpeech: dictionaryPartOfSpeech,
+      dictionaryMeaning,
+      dictionaryPartOfSpeech,
+      meaningCandidate: candidate,
+      meaningState: 'dictionary',
+    }
+  }
+  return {
+    meaning: '',
+    partOfSpeech: dictionaryPartOfSpeech,
+    dictionaryMeaning,
+    dictionaryPartOfSpeech,
+    meaningCandidate: candidate,
+    meaningState: 'empty',
+  }
+}
+
+function meaningReviewAfterWordChange(
+  item: ReviewItem,
+  word: string,
+  dictionary: KoreanDictionaryEntry | undefined,
+): MeaningReviewFields {
+  const revised = meaningReviewForWord(word, item.meaningCandidate, dictionary)
+  if (!item.meaningEditedByUser || !item.meaning.trim()) return revised
+
+  return {
+    ...revised,
+    meaning: item.meaning,
+    partOfSpeech: item.partOfSpeech,
+    meaningState: 'uncertain',
+  }
+}
+
+function meaningStateNeedsReview(state: ReviewItem['meaningState']) {
+  return state === 'related'
+    || state === 'uncertain'
+    || state === 'mismatch'
+}
+
+function meaningNeedsReview(item: ReviewItem) {
+  return meaningStateNeedsReview(item.meaningState)
+}
+
+function meaningStateLabel(item: ReviewItem) {
+  if (item.meaningState === 'exact') return '사전과 정확히 일치'
+  if (item.meaningState === 'related') return '사전 뜻과 유사'
+  if (item.meaningState === 'uncertain') return '뜻 확인 필요'
+  if (item.meaningState === 'mismatch') return '다른 행의 뜻일 가능성'
+  if (item.meaningState === 'dictionary') return '내장 사전 뜻'
+  if (item.meaningState === 'confirmed') return '사진 뜻 확인됨'
+  if (item.meaningState === 'edited') return '직접 수정한 뜻'
+  return '뜻 없음'
 }
 
 function confidenceEvidenceForWords(evidence: readonly OcrWordEvidence[]) {
@@ -123,6 +246,8 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const dictionaryDefinitionsRef = useRef(new Map<string, KoreanDictionaryEntry>())
+  const wordRevisionRef = useRef(new Map<string, number>())
 
   const existingWords = useMemo(
     () => new Set(entries.map((entry) => entry.normalizedWord)),
@@ -148,6 +273,8 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
     setRecognitionSummary(null)
     setLiveMessage('')
     setProgress(initialProgress)
+    dictionaryDefinitionsRef.current = new Map()
+    wordRevisionRef.current = new Map()
     if (uploadInputRef.current) uploadInputRef.current.value = ''
     if (cameraInputRef.current) cameraInputRef.current.value = ''
   }
@@ -168,6 +295,8 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
     setRawText('')
     setRecognitionSummary(null)
     setProgress(initialProgress)
+    dictionaryDefinitionsRef.current = new Map()
+    wordRevisionRef.current = new Map()
   }
 
   const startRecognition = async () => {
@@ -193,6 +322,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
           contrast: 22,
         },
       })
+      const photographedMeanings = pairOcrLinesWithKoreanMeanings(result.lines ?? [])
       const extracted = extractEnglishWords(result.text, {
         existingWords,
         minLetters: 2,
@@ -242,6 +372,25 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
         notify('교정 사전을 불러오지 못했지만 인식 결과는 직접 수정할 수 있어요.', 'info')
       }
 
+      const definitionWords = new Set(reviewWords)
+      for (const alternatives of alternativesByWord.values()) {
+        alternatives.forEach((word) => definitionWords.add(normalizeEnglishWord(word)))
+      }
+      for (const suggestions of dictionarySuggestions.values()) {
+        suggestions.forEach((suggestion) => (
+          definitionWords.add(normalizeEnglishWord(suggestion.word))
+        ))
+      }
+      const definitionResult = await lookupKoreanDefinitions([...definitionWords])
+      dictionaryDefinitionsRef.current = definitionResult.definitions
+      const crossSwappedWords = findCrossSwappedMeaningWords(
+        photographedMeanings,
+        definitionResult.definitions,
+      )
+      if (definitionResult.unavailable) {
+        notify('일부 내장 뜻 사전을 읽지 못했어요. 사진에서 읽은 뜻은 직접 확인할 수 있어요.', 'info')
+      }
+
       if (controller.signal.aborted) {
         throw new OcrError('cancelled', '사진 인식이 취소되었습니다.')
       }
@@ -273,18 +422,27 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
               || (confidence !== undefined && confidence < LOW_CONFIDENCE_THRESHOLD)
               || suggestions.length > 0
             )
+          const meaningReview = meaningReviewForWord(
+            word,
+            photographedMeanings.get(word),
+            definitionResult.definitions.get(word),
+            crossSwappedWords.has(word),
+          )
+          const needsMeaningReview = meaningStateNeedsReview(meaningReview.meaningState)
 
           return {
             id: makeReviewId(index),
             word,
             originalWord: word,
-            selected: !existingWords.has(word) && !needsReview,
+            selected: !existingWords.has(word) && !needsReview && !needsMeaningReview,
             repeatedInPhoto: repeated.has(word),
             recovered,
             requiresManualValidation: !isPlausibleEnglishWord(word),
             confidence,
             suggestions,
             reviewState: needsReview ? 'pending' : 'clear',
+            meaningEditedByUser: false,
+            ...meaningReview,
           }
         }),
       )
@@ -295,7 +453,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
           : '교정이 필요한 단어와 인식 신뢰도를 확인해 주세요.',
       )
       notify(
-        `${reviewWords.length}개 영어 후보를 찾았어요. 저장할 단어를 확인해 주세요.`,
+        `${reviewWords.length}개 영어 후보와 사진 속 뜻 ${photographedMeanings.size}개를 찾았어요. 저장할 내용을 확인해 주세요.`,
         'success',
       )
     } catch (recognitionError) {
@@ -332,15 +490,20 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
     return status === 'invalid' || status === 'review-duplicate'
   })
   const selectedCount = availableItems.filter((item) => item.selected).length
-  const pendingCount = availableItems.filter((item) => item.reviewState === 'pending').length
+  const pendingCount = availableItems.filter(
+    (item) => item.reviewState === 'pending' || meaningNeedsReview(item),
+  ).length
   const attentionCount = pendingCount + problemItems.length
   const recoveredItemCount = reviewItems.filter((item) => item.recovered).length
   const repeatedItemCount = reviewItems.filter((item) => item.repeatedInPhoto).length
-  const bulkSelectableItems = availableItems.filter((item) => item.reviewState !== 'pending')
+  const bulkSelectableItems = availableItems.filter(
+    (item) => item.reviewState !== 'pending' && !meaningNeedsReview(item),
+  )
   const allAvailableSelected =
     bulkSelectableItems.length > 0 && bulkSelectableItems.every((item) => item.selected)
 
   const updateWord = (id: string, value: string) => {
+    wordRevisionRef.current.set(id, (wordRevisionRef.current.get(id) ?? 0) + 1)
     setReviewItems((current) =>
       current.map((item) => {
         if (item.id !== id) return item
@@ -349,44 +512,79 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
           || previousStatus === 'invalid'
           || previousStatus === 'review-duplicate'
           || !isPlausibleEnglishWord(normalizeEnglishWord(value))
+        const normalized = normalizeEnglishWord(value)
+        const revisedMeaning = meaningReviewAfterWordChange(
+          item,
+          normalized,
+          dictionaryDefinitionsRef.current.get(normalized),
+        )
 
         return {
           ...item,
           word: value,
-          selected: !needsValidation,
+          selected: !needsValidation && !meaningStateNeedsReview(revisedMeaning.meaningState),
           suggestions: [],
           requiresManualValidation: needsValidation,
           reviewState: needsValidation ? 'pending' : 'edited',
+          ...revisedMeaning,
         }
       }),
     )
     setLiveMessage('수정한 철자를 확인해 주세요.')
   }
 
-  const confirmEditedCandidate = (id: string) => {
+  const confirmEditedCandidate = async (id: string) => {
     const item = reviewItems.find((candidate) => candidate.id === id)
-    if (!item || !isPlausibleEnglishWord(normalizeEnglishWord(item.word))) {
+    const normalized = normalizeEnglishWord(item?.word ?? '')
+    if (!item || !isPlausibleEnglishWord(normalized)) {
       setLiveMessage('저장할 수 있는 영어 단어 형태로 수정해 주세요.')
       return
     }
+    const requestedRevision = wordRevisionRef.current.get(id) ?? 0
 
-    setReviewItems((current) => current.map((candidate) => (
-      candidate.id === id
-        ? {
-            ...candidate,
-            selected: true,
-            requiresManualValidation: false,
-            reviewState: 'edited',
-          }
-        : candidate
-    )))
-    setLiveMessage('직접 수정한 단어를 확인하고 선택했어요.')
+    let dictionary = dictionaryDefinitionsRef.current.get(normalized)
+    if (!dictionary) {
+      const result = await lookupKoreanDefinitions([normalized])
+      dictionary = result.definitions.get(normalized)
+      if (dictionary) dictionaryDefinitionsRef.current.set(normalized, dictionary)
+    }
+    if ((wordRevisionRef.current.get(id) ?? 0) !== requestedRevision) {
+      setLiveMessage('단어가 다시 수정되어 최신 철자를 기준으로 확인해 주세요.')
+      return
+    }
+
+    setReviewItems((current) => current.map((candidate) => {
+      if (candidate.id !== id || normalizeEnglishWord(candidate.word) !== normalized) {
+        return candidate
+      }
+      const currentMeaningReview = meaningReviewAfterWordChange(
+        candidate,
+        normalized,
+        dictionary,
+      )
+      return {
+        ...candidate,
+        ...currentMeaningReview,
+        requiresManualValidation: false,
+        reviewState: 'edited',
+        selected: !meaningStateNeedsReview(currentMeaningReview.meaningState),
+      }
+    }))
+    const meaningReview = meaningReviewAfterWordChange(item, normalized, dictionary)
+    setLiveMessage(
+      meaningStateNeedsReview(meaningReview.meaningState)
+        ? '철자를 확인했어요. 한국어 뜻도 확인해 주세요.'
+        : '직접 수정한 단어를 확인하고 선택했어요.',
+    )
   }
 
   const toggleWord = (id: string) => {
     setReviewItems((current) =>
       current.map((item) =>
-        item.id === id && statusFor(item) === 'new' && item.reviewState !== 'pending'
+        item.id === id
+          && statusFor(item) === 'new'
+          && item.reviewState !== 'pending'
+          && !meaningNeedsReview(item)
           ? { ...item, selected: !item.selected }
           : item,
       ),
@@ -396,7 +594,9 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
   const toggleAll = () => {
     setReviewItems((current) =>
       current.map((item) =>
-        statusFor(item) === 'new' && item.reviewState !== 'pending'
+        statusFor(item) === 'new'
+          && item.reviewState !== 'pending'
+          && !meaningNeedsReview(item)
           ? { ...item, selected: !allAvailableSelected }
           : item,
       ),
@@ -404,49 +604,122 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
   }
 
   const applySuggestion = (id: string, suggestion: string) => {
-    const validSuggestion = isPlausibleEnglishWord(normalizeEnglishWord(suggestion))
-    setReviewItems((current) => current.map((item) => (
-      item.id === id
-        ? {
-            ...item,
-            word: suggestion,
-            selected: validSuggestion,
-            suggestions: [],
-            requiresManualValidation: !validSuggestion,
-            reviewState: validSuggestion ? 'corrected' : 'pending',
-          }
-        : item
-    )))
+    const normalized = normalizeEnglishWord(suggestion)
+    const validSuggestion = isPlausibleEnglishWord(normalized)
+    const currentItem = reviewItems.find((item) => item.id === id)
+    const revisedMeaning = currentItem
+      ? meaningReviewAfterWordChange(
+          currentItem,
+          normalized,
+          dictionaryDefinitionsRef.current.get(normalized),
+        )
+      : null
+    wordRevisionRef.current.set(id, (wordRevisionRef.current.get(id) ?? 0) + 1)
+    setReviewItems((current) => current.map((item) => {
+      if (item.id !== id) return item
+      const meaningReview = revisedMeaning ?? meaningReviewAfterWordChange(
+        item,
+        normalized,
+        dictionaryDefinitionsRef.current.get(normalized),
+      )
+      return {
+        ...item,
+        word: suggestion,
+        selected: validSuggestion && !meaningStateNeedsReview(meaningReview.meaningState),
+        suggestions: [],
+        requiresManualValidation: !validSuggestion,
+        reviewState: validSuggestion ? 'corrected' : 'pending',
+        ...meaningReview,
+      }
+    }))
     setLiveMessage(
-      validSuggestion
-        ? `${suggestion}으로 교정하고 선택했어요.`
+      validSuggestion && revisedMeaning && meaningStateNeedsReview(revisedMeaning.meaningState)
+        ? `${suggestion}으로 교정했어요. 한국어 뜻도 확인해 주세요.`
+        : validSuggestion
+          ? `${suggestion}으로 교정하고 선택했어요.`
         : '추천 결과를 저장할 수 있는 영어 단어 형태로 다시 확인해 주세요.',
     )
   }
 
   const keepOriginalWord = (id: string) => {
+    const currentItem = reviewItems.find((item) => item.id === id)
     setReviewItems((current) => current.map((item) => (
       item.id === id
         ? {
             ...item,
-            selected: true,
+            selected: !meaningNeedsReview(item),
             suggestions: [],
             requiresManualValidation: false,
             reviewState: 'kept',
           }
         : item
     )))
-    setLiveMessage('인식된 원문을 그대로 유지하고 선택했어요.')
+    setLiveMessage(
+      currentItem && meaningNeedsReview(currentItem)
+        ? '인식된 영문을 유지했어요. 한국어 뜻도 확인해 주세요.'
+        : '인식된 원문을 그대로 유지하고 선택했어요.',
+    )
+  }
+
+  const updateMeaning = (id: string, value: string) => {
+    setReviewItems((current) => current.map((item) => (
+      item.id === id
+        ? {
+            ...item,
+            meaning: value,
+            meaningEditedByUser: Boolean(value.trim()),
+            selected: value.trim()
+              ? (meaningNeedsReview(item) ? item.reviewState !== 'pending' : item.selected)
+              : item.selected,
+            meaningState: value.trim() ? 'edited' : 'empty',
+          }
+        : item
+    )))
+    setLiveMessage('한국어 뜻을 직접 확인했어요.')
+  }
+
+  const confirmPhotographedMeaning = (id: string) => {
+    setReviewItems((current) => current.map((item) => (
+      item.id === id
+        ? {
+            ...item,
+            selected: item.reviewState !== 'pending',
+            meaningState: 'confirmed',
+          }
+        : item
+    )))
+    setLiveMessage('사진에서 읽은 뜻을 사용할게요.')
+  }
+
+  const chooseDictionaryMeaning = (id: string) => {
+    setReviewItems((current) => current.map((item) => (
+      item.id === id && item.dictionaryMeaning
+        ? {
+            ...item,
+            meaning: item.dictionaryMeaning,
+            partOfSpeech: item.dictionaryPartOfSpeech || item.partOfSpeech,
+            meaningEditedByUser: false,
+            selected: item.reviewState !== 'pending',
+            meaningState: 'dictionary',
+          }
+        : item
+    )))
+    setLiveMessage('내장 사전 뜻을 사용할게요.')
   }
 
   const removeReviewItem = (id: string) => {
+    wordRevisionRef.current.delete(id)
     setReviewItems((current) => current.filter((item) => item.id !== id))
   }
 
   const saveSelected = async () => {
     const selected = reviewItems
       .filter((item) => item.selected && statusFor(item) === 'new')
-      .map((item) => ({ word: normalizeEnglishWord(item.word) }))
+      .map((item) => ({
+        word: normalizeEnglishWord(item.word),
+        meaning: item.meaning.trim(),
+        partOfSpeech: item.partOfSpeech.trim(),
+      }))
     if (selected.length === 0) return
 
     setSaving(true)
@@ -478,7 +751,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
           <div>
             <span className="eyebrow">CHECK BEFORE SAVE</span>
             <h1 id="review-title">인식 결과를 확인해 주세요</h1>
-            <p>신뢰도가 낮은 단어는 교정 후보나 원문 유지를 선택해 주세요.</p>
+            <p>영문 철자와 사진에서 읽은 한국어 뜻을 함께 확인해 주세요.</p>
           </div>
           <div className="review-count-pill">
             <strong>{selectedCount}</strong>
@@ -512,7 +785,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
           <div className="review-panel surface">
             <div className="review-toolbar">
               <div>
-                <h2>인식된 영어 후보</h2>
+                <h2>인식된 영어 단어와 뜻</h2>
                 <p>고유 후보 {reviewItems.length}개 · 저장 가능 {availableItems.length}개 · 확인 필요 {attentionCount}개</p>
                 {recoveredItemCount > 0 || repeatedItemCount > 0 ? (
                   <p className="review-detail-counts">
@@ -531,7 +804,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
             <div className="review-word-list">
               {availableItems.map((item) => (
                 <div
-                  className={`review-word-item ${item.selected ? 'is-selected' : ''} ${item.reviewState === 'pending' ? 'needs-review' : ''}`}
+                  className={`review-word-item ${item.selected ? 'is-selected' : ''} ${item.reviewState === 'pending' || meaningNeedsReview(item) ? 'needs-review' : ''}`}
                   key={item.id}
                 >
                   <div className="review-word-row">
@@ -539,7 +812,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                       <input
                         type="checkbox"
                         checked={item.selected}
-                        disabled={item.reviewState === 'pending'}
+                        disabled={item.reviewState === 'pending' || meaningNeedsReview(item)}
                         onChange={() => toggleWord(item.id)}
                       />
                       <span className="custom-check"><Check size={14} aria-hidden="true" /></span>
@@ -591,6 +864,58 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                       </div>
                     </div>
                   ) : null}
+                  <div className={`review-meaning meaning-${item.meaningState}`}>
+                    <div className="review-meaning-heading">
+                      <label htmlFor={`meaning-${item.id}`}>한국어 뜻</label>
+                      <span className="meaning-status">{meaningStateLabel(item)}</span>
+                      {item.partOfSpeech ? <span className="pos-chip">{item.partOfSpeech}</span> : null}
+                      {item.meaningCandidate ? (
+                        <span className="meaning-confidence">
+                          사진 인식 {Math.round(item.meaningCandidate.confidence)}%
+                        </span>
+                      ) : null}
+                    </div>
+                    <input
+                      id={`meaning-${item.id}`}
+                      className="review-meaning-input"
+                      value={item.meaning}
+                      onChange={(event) => updateMeaning(item.id, event.target.value)}
+                      placeholder="사진에서 뜻을 찾지 못했어요. 직접 입력할 수 있어요."
+                      aria-label={`${normalizeEnglishWord(item.word) || item.word} 한국어 뜻`}
+                      aria-describedby={meaningNeedsReview(item) ? `meaning-help-${item.id}` : undefined}
+                    />
+                    {meaningNeedsReview(item) ? (
+                      <div id={`meaning-help-${item.id}`} className="meaning-check-panel">
+                        <div>
+                          <strong>사진 속 뜻을 한 번 확인해 주세요.</strong>
+                          <span>내장 사전과 정확히 일치하지 않거나 사전에 없는 표현이에요.</span>
+                        </div>
+                        {item.dictionaryMeaning ? (
+                          <p><strong>내장 사전</strong><span>{item.dictionaryMeaning}</span></p>
+                        ) : null}
+                        <div className="meaning-check-actions">
+                          <button
+                            type="button"
+                            className="correction-button"
+                            onClick={() => confirmPhotographedMeaning(item.id)}
+                            aria-label={`${item.word}의 ${item.meaningEditedByUser ? '현재' : '사진 속'} 한국어 뜻 사용`}
+                          >
+                            {item.meaningEditedByUser ? '현재 뜻 사용' : '사진 뜻 사용'}
+                          </button>
+                          {item.dictionaryMeaning ? (
+                            <button
+                              type="button"
+                              className="correction-button suggestion"
+                              onClick={() => chooseDictionaryMeaning(item.id)}
+                              aria-label={`${item.word}의 내장 사전 뜻 사용`}
+                            >
+                              내장 사전 뜻 사용
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               ))}
               {availableItems.length === 0 ? (
@@ -642,7 +967,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                         type="button"
                         className="correction-button confirm-edit-button"
                         disabled={!isPlausibleEnglishWord(normalizeEnglishWord(item.word))}
-                        onClick={() => confirmEditedCandidate(item.id)}
+                        onClick={() => void confirmEditedCandidate(item.id)}
                         aria-label={`${item.originalWord} 수정 확인`}
                       >
                         수정 확인
@@ -673,10 +998,10 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
         <div className="hero-copy">
           <span className="eyebrow"><span aria-hidden="true">✦</span> PRIVATE · FREE · IN YOUR BROWSER</span>
           <h1 id="photo-title">사진 속 한·영 문장을<br /><em>오늘의 단어장</em>으로.</h1>
-          <p>한국어 설명이 섞인 책과 프린트도 함께 읽고, 영어 단어만 골라 드려요. 저장 전 교정 후보와 원문을 확인해 보세요.</p>
+          <p>한국어 설명이 섞인 책과 프린트도 함께 읽고, 영어 단어와 가까운 한국어 뜻을 짝지어 드려요. 저장 전 철자와 뜻을 확인해 보세요.</p>
           <div className="feature-points" aria-label="주요 특징">
             <span><Check size={15} aria-hidden="true" /> 기기 안에서만 OCR</span>
-            <span><Check size={15} aria-hidden="true" /> 한·영 혼합 OCR·교정 제안</span>
+            <span><Check size={15} aria-hidden="true" /> 한·영 혼합 OCR·뜻 연결</span>
             <span><Check size={15} aria-hidden="true" /> 무료·API 키 불필요</span>
           </div>
         </div>

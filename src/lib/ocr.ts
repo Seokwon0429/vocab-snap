@@ -136,6 +136,13 @@ export interface OcrWordEvidence {
   recoveredFromAlternatePass?: boolean;
 }
 
+export interface OcrLineEvidence {
+  text: string;
+  confidence: number;
+  bbox: OcrBoundingBox;
+  words: OcrWordEvidence[];
+}
+
 export interface OcrPassSummary {
   variant: OcrVariant;
   confidence: number;
@@ -151,6 +158,8 @@ export interface OcrResult {
   candidateTexts?: readonly string[];
   confidence: number;
   words: OcrWordEvidence[];
+  /** Selected-pass line layout used to pair vocabulary with nearby meanings. */
+  lines?: OcrLineEvidence[];
   selectedVariant: OcrVariant;
   passes: OcrPassSummary[];
   detectedKorean: boolean;
@@ -558,6 +567,9 @@ interface OcrWordLike {
 interface OcrBlockLike {
   paragraphs: Array<{
     lines: Array<{
+      text?: string;
+      confidence?: number;
+      bbox?: OcrBoundingBox;
       words: OcrWordLike[];
     }>;
   }>;
@@ -568,6 +580,7 @@ interface OcrPassCandidate {
   text: string;
   confidence: number;
   words: OcrWordEvidence[];
+  lines: OcrLineEvidence[];
   characterCount: number;
 }
 
@@ -579,34 +592,76 @@ export interface OcrPassQualityInput {
   characterCount: number;
 }
 
-/** Flattens only the lightweight word evidence needed by the review screen. */
-export function flattenOcrWords(blocks: OcrBlockLike[] | null | undefined): OcrWordEvidence[] {
+function toWordEvidence(word: OcrWordLike): OcrWordEvidence | null {
+  const text = word.text?.trim();
+  if (!text) return null;
+
+  return {
+    text,
+    confidence: clamp(Number(word.confidence) || 0, 0, 100),
+    bbox: word.bbox,
+    alternatives: (word.choices ?? [])
+      .filter((choice) => choice.text && choice.text !== text)
+      .sort((left, right) => right.confidence - left.confidence)
+      .slice(0, 3)
+      .map((choice) => choice.text),
+  };
+}
+
+function isValidBoundingBox(box: OcrBoundingBox | undefined): box is OcrBoundingBox {
+  return Boolean(
+    box
+      && Number.isFinite(box.x0)
+      && Number.isFinite(box.y0)
+      && Number.isFinite(box.x1)
+      && Number.isFinite(box.y1)
+      && box.x1 > box.x0
+      && box.y1 > box.y0,
+  );
+}
+
+function boundingBoxForWords(words: readonly OcrWordEvidence[]): OcrBoundingBox {
+  return {
+    x0: Math.min(...words.map((word) => word.bbox.x0)),
+    y0: Math.min(...words.map((word) => word.bbox.y0)),
+    x1: Math.max(...words.map((word) => word.bbox.x1)),
+    y1: Math.max(...words.map((word) => word.bbox.y1)),
+  };
+}
+
+/** Keeps selected-pass line membership so nearby Korean meanings can be paired safely. */
+export function flattenOcrLines(
+  blocks: OcrBlockLike[] | null | undefined,
+): OcrLineEvidence[] {
   if (!blocks) return [];
 
-  const words: OcrWordEvidence[] = [];
+  const lines: OcrLineEvidence[] = [];
   for (const block of blocks) {
     for (const paragraph of block.paragraphs ?? []) {
       for (const line of paragraph.lines ?? []) {
+        const words: OcrWordEvidence[] = [];
         for (const word of line.words ?? []) {
-          const text = word.text?.trim();
-          if (!text) continue;
-
-          words.push({
-            text,
-            confidence: clamp(Number(word.confidence) || 0, 0, 100),
-            bbox: word.bbox,
-            alternatives: (word.choices ?? [])
-              .filter((choice) => choice.text && choice.text !== text)
-              .sort((left, right) => right.confidence - left.confidence)
-              .slice(0, 3)
-              .map((choice) => choice.text),
-          });
+          const evidence = toWordEvidence(word);
+          if (evidence && isValidBoundingBox(evidence.bbox)) words.push(evidence);
         }
+        if (words.length === 0) continue;
+
+        lines.push({
+          text: line.text?.trim() || words.map((word) => word.text).join(' '),
+          confidence: clamp(Number(line.confidence) || 0, 0, 100),
+          bbox: isValidBoundingBox(line.bbox) ? line.bbox : boundingBoxForWords(words),
+          words,
+        });
       }
     }
   }
 
-  return words;
+  return lines;
+}
+
+/** Flattens only the lightweight word evidence needed by the review screen. */
+export function flattenOcrWords(blocks: OcrBlockLike[] | null | undefined): OcrWordEvidence[] {
+  return flattenOcrLines(blocks).flatMap((line) => line.words);
 }
 
 function boundingBoxIntersectionRatio(
@@ -902,13 +957,15 @@ export async function recognizeImageText(
 
       if (currentPassIndex === 0) firstRotation = result.data.rotateRadians;
       const text = result.data.text.trim();
-      const words = flattenOcrWords(result.data.blocks);
+      const lines = flattenOcrLines(result.data.blocks);
+      const words = lines.flatMap((line) => line.words);
       const characterCount = text.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
       candidates.push({
         variant,
         text,
         confidence: clamp(result.data.confidence, 0, 100),
         words,
+        lines,
         characterCount,
       });
     };
@@ -993,6 +1050,7 @@ export async function recognizeImageText(
       ],
       confidence: selected.confidence,
       words: consolidatedWords,
+      lines: selected.lines,
       selectedVariant: selected.variant,
       passes: ranked.summaries,
       detectedKorean: usableCandidates.some((candidate) => /\p{Script=Hangul}/u.test(candidate.text)),
