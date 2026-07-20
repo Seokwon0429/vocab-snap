@@ -2059,7 +2059,7 @@ input[type="checkbox"] {
 
 .word-table th:nth-child(2),
 .word-table td:nth-child(2) {
-  width: 18%;
+  width: var(--word-column-width, 18%);
 }
 
 .word-table th:nth-child(3),
@@ -2074,7 +2074,7 @@ input[type="checkbox"] {
 
 .word-table th:nth-child(5),
 .word-table td:nth-child(5) {
-  width: 22%;
+  width: var(--memo-column-width, 22%);
 }
 
 .word-table th:nth-child(6),
@@ -2102,7 +2102,9 @@ input[type="checkbox"] {
 }
 
 .word-cell-copy {
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 .word-cell-title {
@@ -2113,7 +2115,11 @@ input[type="checkbox"] {
 }
 
 .word-cell strong {
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   overflow-wrap: anywhere;
   color: var(--ink);
   font-family: Georgia, serif;
