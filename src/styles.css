@@ -1997,14 +1997,15 @@ input[type="checkbox"] {
 }
 
 .word-table-wrap {
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   border-radius: 18px;
 }
 
 .word-table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 .word-table th,
@@ -2103,24 +2104,20 @@ input[type="checkbox"] {
 
 .word-cell-copy {
   flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
+  min-width: max-content;
 }
 
 .word-cell-title {
   display: flex;
-  min-width: 0;
+  min-width: max-content;
   align-items: center;
   gap: 7px;
 }
 
 .word-cell strong {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 0 0 auto;
+  min-width: max-content;
   white-space: nowrap;
-  overflow-wrap: anywhere;
   color: var(--ink);
   font-family: Georgia, serif;
   font-size: 17px;
