@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { OcrLineEvidence, OcrWordEvidence } from './ocr'
 import {
   compareOcrMeaningWithDictionary,
+  correctOcrKoreanSpacing,
   findCrossSwappedMeaningWords,
   pairOcrLinesWithKoreanMeanings,
   type OcrMeaningCandidate,
@@ -105,6 +106,18 @@ describe('사진 속 영어 단어와 한국어 뜻 연결', () => {
     expect(pairs.has('verb')).toBe(false)
   })
 
+  it('한글 뜻이 한 음절씩 별도 OCR 조각으로 나뉘어도 후보를 보존한다', () => {
+    const pairs = pairOcrLinesWithKoreanMeanings([
+      line([
+        evidence('apple', 10, 70),
+        evidence('사', 110, 125),
+        evidence('과', 130, 145),
+      ], 'apple : 사 과'),
+    ])
+
+    expect(pairs.get('apple')).toMatchObject({ meaning: '사 과' })
+  })
+
   it('noun 자체가 표제어인 행은 품사 메타데이터로 오인하지 않는다', () => {
     const pairs = pairOcrLinesWithKoreanMeanings([
       line([evidence('noun', 10, 60), evidence('명사', 100, 145)], 'noun : 명사'),
@@ -167,6 +180,24 @@ describe('사진 뜻과 내장 사전 비교', () => {
       meaning: '사과; 사과나무 열매',
       partOfSpeech: '명사',
     })).toBe('exact')
+  })
+
+  it('한글 OCR이 글자 사이를 잘못 띄우면 일치하는 사전 표기로 보정한다', () => {
+    const dictionary = {
+      meaning: '사과; 사과나무 열매',
+      partOfSpeech: '명사',
+    }
+    const spacedCandidate = { ...strongCandidate, meaning: '사 과' }
+
+    expect(correctOcrKoreanSpacing(spacedCandidate.meaning, dictionary)).toBe('사과')
+    expect(compareOcrMeaningWithDictionary(spacedCandidate, dictionary)).toBe('exact')
+  })
+
+  it('띄어쓰기 외의 글자가 다르면 사전 뜻으로 바꾸지 않는다', () => {
+    expect(correctOcrKoreanSpacing('바 나 나', {
+      meaning: '사과',
+      partOfSpeech: '명사',
+    })).toBe('바 나 나')
   })
 
   it('사전 설명 속 핵심 단어가 같으면 유사, 근거가 없으면 확인 필요로 판정한다', () => {

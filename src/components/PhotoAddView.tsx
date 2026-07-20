@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   Camera,
@@ -31,6 +31,7 @@ import {
 } from '../lib/ocr'
 import {
   compareOcrMeaningWithDictionary,
+  correctOcrKoreanSpacing,
   findCrossSwappedMeaningWords,
   pairOcrLinesWithKoreanMeanings,
   type OcrMeaningCandidate,
@@ -70,6 +71,7 @@ interface ReviewItem {
   dictionaryPartOfSpeech: string
   meaningCandidate?: OcrMeaningCandidate
   meaningEditedByUser: boolean
+  meaningSpacingCorrected: boolean
   meaningState:
     | 'exact'
     | 'related'
@@ -85,9 +87,13 @@ interface RecognitionSummary {
   confidence: number
   passCount: number
   detectedKorean: boolean
+  hiddenLowConfidenceCount: number
 }
 
 const LOW_CONFIDENCE_THRESHOLD = 75
+const MIN_VISIBLE_WORD_CONFIDENCE = 20
+const LOW_CONFIDENCE_REVIEW_CEILING = 50
+const VERY_LOW_CONFIDENCE_CEILING = 40
 
 const initialProgress: OcrProgress = {
   progress: 0,
@@ -107,6 +113,7 @@ type MeaningReviewFields = Pick<
   | 'dictionaryMeaning'
   | 'dictionaryPartOfSpeech'
   | 'meaningCandidate'
+  | 'meaningSpacingCorrected'
   | 'meaningState'
 >
 
@@ -119,6 +126,8 @@ function meaningReviewForWord(
   const dictionaryMeaning = dictionary?.meaning.trim() ?? ''
   const dictionaryPartOfSpeech = dictionary?.partOfSpeech.trim() ?? ''
   if (candidate?.meaning.trim()) {
+    const correctedMeaning = correctOcrKoreanSpacing(candidate.meaning, dictionary)
+    const meaningSpacingCorrected = correctedMeaning !== candidate.meaning.trim()
     const photographedParts = new Set(candidate.partOfSpeech.split('·').filter(Boolean))
     const dictionaryParts = new Set(dictionaryPartOfSpeech.split('·').filter(Boolean))
     const partOfSpeechConflict = photographedParts.size > 0
@@ -129,15 +138,20 @@ function meaningReviewForWord(
       : partOfSpeechConflict
         ? 'uncertain'
         : compareOcrMeaningWithDictionary(
-            { ...candidate, word: normalizeEnglishWord(word) },
+            {
+              ...candidate,
+              word: normalizeEnglishWord(word),
+              meaning: correctedMeaning,
+            },
             dictionary,
           )
     return {
-      meaning: candidate.meaning.trim(),
+      meaning: correctedMeaning,
       partOfSpeech: candidate.partOfSpeech.trim() || dictionaryPartOfSpeech,
       dictionaryMeaning,
       dictionaryPartOfSpeech,
       meaningCandidate: candidate,
+      meaningSpacingCorrected,
       meaningState: agreement,
     }
   }
@@ -148,6 +162,7 @@ function meaningReviewForWord(
       dictionaryMeaning,
       dictionaryPartOfSpeech,
       meaningCandidate: candidate,
+      meaningSpacingCorrected: false,
       meaningState: 'dictionary',
     }
   }
@@ -157,6 +172,7 @@ function meaningReviewForWord(
     dictionaryMeaning,
     dictionaryPartOfSpeech,
     meaningCandidate: candidate,
+    meaningSpacingCorrected: false,
     meaningState: 'empty',
   }
 }
@@ -173,6 +189,7 @@ function meaningReviewAfterWordChange(
     ...revised,
     meaning: item.meaning,
     partOfSpeech: item.partOfSpeech,
+    meaningSpacingCorrected: false,
     meaningState: 'uncertain',
   }
 }
@@ -188,6 +205,9 @@ function meaningNeedsReview(item: ReviewItem) {
 }
 
 function meaningStateLabel(item: ReviewItem) {
+  if (item.meaningState === 'exact' && item.meaningSpacingCorrected) {
+    return '띄어쓰기 자동 보정·사전 일치'
+  }
   if (item.meaningState === 'exact') return '사전과 정확히 일치'
   if (item.meaningState === 'related') return '사전 뜻과 유사'
   if (item.meaningState === 'uncertain') return '뜻 확인 필요'
@@ -196,6 +216,17 @@ function meaningStateLabel(item: ReviewItem) {
   if (item.meaningState === 'confirmed') return '사진 뜻 확인됨'
   if (item.meaningState === 'edited') return '직접 수정한 뜻'
   return '뜻 없음'
+}
+
+function isLowConfidenceReviewItem(item: ReviewItem) {
+  return item.confidence !== undefined
+    && item.confidence >= MIN_VISIBLE_WORD_CONFIDENCE
+    && item.confidence < LOW_CONFIDENCE_REVIEW_CEILING
+}
+
+function isVeryLowConfidenceItem(item: ReviewItem) {
+  return item.confidence !== undefined
+    && item.confidence < VERY_LOW_CONFIDENCE_CEILING
 }
 
 function confidenceEvidenceForWords(evidence: readonly OcrWordEvidence[]) {
@@ -328,7 +359,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
         minLetters: 2,
       })
       const strictWords = new Set(extracted.words)
-      const reviewWords = [...extracted.words]
+      let reviewWords = [...extracted.words]
       const reviewWordSet = new Set(reviewWords)
       const recoveredCandidates = extractEnglishOcrCandidates(
         [...(result.candidateTexts ?? [result.text]), ...result.words.map((word) => word.text)],
@@ -341,19 +372,29 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
         }
       }
 
-      if (reviewWords.length === 0) {
-        throw new OcrError(
-          'no_text_detected',
-          result.detectedKorean
-            ? '한국어 문장은 읽었지만 저장할 영어 단어를 찾지 못했어요.'
-            : '저장할 만한 영어 단어를 찾지 못했어요. 글자가 더 선명한 사진으로 다시 시도해 주세요.',
-        )
-      }
       const {
         confidenceByWord,
         alternativesByWord,
         repeatedWords: repeatedEvidenceWords,
       } = confidenceEvidenceForWords(result.words)
+      const hiddenLowConfidenceCount = reviewWords.filter((word) => {
+        const confidence = confidenceByWord.get(word)
+        return confidence !== undefined && confidence < MIN_VISIBLE_WORD_CONFIDENCE
+      }).length
+      reviewWords = reviewWords.filter((word) => {
+        const confidence = confidenceByWord.get(word)
+        return confidence === undefined || confidence >= MIN_VISIBLE_WORD_CONFIDENCE
+      })
+      if (reviewWords.length === 0) {
+        throw new OcrError(
+          'no_text_detected',
+          hiddenLowConfidenceCount > 0
+            ? '인식률 20% 이상인 영어 단어를 찾지 못했어요. 더 선명한 사진으로 다시 시도해 주세요.'
+            : result.detectedKorean
+              ? '한국어 문장은 읽었지만 저장할 영어 단어를 찾지 못했어요.'
+              : '저장할 만한 영어 단어를 찾지 못했어요. 글자가 더 선명한 사진으로 다시 시도해 주세요.',
+        )
+      }
       const repeated = new Set([
         ...extracted.duplicateWords,
         ...repeatedEvidenceWords,
@@ -400,6 +441,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
         confidence: result.confidence,
         passCount: result.passes.length,
         detectedKorean: result.detectedKorean,
+        hiddenLowConfidenceCount,
       })
       setReviewItems(
         reviewWords.map((word, index) => {
@@ -453,7 +495,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
           : '교정이 필요한 단어와 인식 신뢰도를 확인해 주세요.',
       )
       notify(
-        `${reviewWords.length}개 영어 후보와 사진 속 뜻 ${photographedMeanings.size}개를 찾았어요. 저장할 내용을 확인해 주세요.`,
+        `${reviewWords.length}개 영어 후보와 사진 속 뜻 ${photographedMeanings.size}개를 찾았어요.${hiddenLowConfidenceCount > 0 ? ` 인식률 20% 미만 ${hiddenLowConfidenceCount}개는 제외했어요.` : ''} 저장할 내용을 확인해 주세요.`,
         'success',
       )
     } catch (recognitionError) {
@@ -483,7 +525,10 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
     return 'new' as const
   }
 
-  const availableItems = reviewItems.filter((item) => statusFor(item) === 'new')
+  const newItems = reviewItems.filter((item) => statusFor(item) === 'new')
+  const regularAvailableItems = newItems.filter((item) => !isLowConfidenceReviewItem(item))
+  const lowConfidenceItems = newItems.filter(isLowConfidenceReviewItem)
+  const availableItems = [...regularAvailableItems, ...lowConfidenceItems]
   const existingItems = reviewItems.filter((item) => statusFor(item) === 'existing')
   const problemItems = reviewItems.filter((item) => {
     const status = statusFor(item)
@@ -496,7 +541,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
   const attentionCount = pendingCount + problemItems.length
   const recoveredItemCount = reviewItems.filter((item) => item.recovered).length
   const repeatedItemCount = reviewItems.filter((item) => item.repeatedInPhoto).length
-  const bulkSelectableItems = availableItems.filter(
+  const bulkSelectableItems = regularAvailableItems.filter(
     (item) => item.reviewState !== 'pending' && !meaningNeedsReview(item),
   )
   const allAvailableSelected =
@@ -668,6 +713,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
             ...item,
             meaning: value,
             meaningEditedByUser: Boolean(value.trim()),
+            meaningSpacingCorrected: false,
             selected: value.trim()
               ? (meaningNeedsReview(item) ? item.reviewState !== 'pending' : item.selected)
               : item.selected,
@@ -699,6 +745,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
             meaning: item.dictionaryMeaning,
             partOfSpeech: item.dictionaryPartOfSpeech || item.partOfSpeech,
             meaningEditedByUser: false,
+            meaningSpacingCorrected: false,
             selected: item.reviewState !== 'pending',
             meaningState: 'dictionary',
           }
@@ -770,6 +817,9 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                 <span>{recognitionSummary.detectedKorean ? '한·영 혼합 인식' : '영어 인식'}</span>
                 <span>전체 신뢰도 {Math.round(recognitionSummary.confidence)}%</span>
                 <span>{recognitionSummary.passCount}회 비교</span>
+                {recognitionSummary.hiddenLowConfidenceCount > 0 ? (
+                  <span>20% 미만 {recognitionSummary.hiddenLowConfidenceCount}개 제외</span>
+                ) : null}
               </div>
             ) : null}
             <button type="button" className="text-button raw-toggle" onClick={() => setShowRawText((value) => !value)} aria-expanded={showRawText}>
@@ -802,11 +852,17 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
             </div>
 
             <div className="review-word-list">
-              {availableItems.map((item) => (
-                <div
-                  className={`review-word-item ${item.selected ? 'is-selected' : ''} ${item.reviewState === 'pending' || meaningNeedsReview(item) ? 'needs-review' : ''}`}
-                  key={item.id}
-                >
+              {availableItems.map((item, index) => (
+                <Fragment key={item.id}>
+                  {lowConfidenceItems.length > 0 && index === regularAvailableItems.length ? (
+                    <div className="low-confidence-divider" role="note">
+                      <strong>낮은 인식률 후보 · 별도 검토</strong>
+                      <span>40~49%는 철자를 확인해 주세요. 20~39%는 오류 가능성이 매우 높아요.</span>
+                    </div>
+                  ) : null}
+                  <div
+                    className={`review-word-item ${item.selected ? 'is-selected' : ''} ${item.reviewState === 'pending' || meaningNeedsReview(item) ? 'needs-review' : ''} ${isVeryLowConfidenceItem(item) ? 'very-low-confidence' : ''}`}
+                  >
                   <div className="review-word-row">
                     <label className="review-checkbox">
                       <input
@@ -830,7 +886,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                       />
                     </div>
                     {item.confidence !== undefined ? (
-                      <span className={`confidence-badge ${item.confidence < LOW_CONFIDENCE_THRESHOLD ? 'is-low' : ''}`}>
+                      <span className={`confidence-badge ${item.confidence < LOW_CONFIDENCE_THRESHOLD ? 'is-low' : ''} ${isVeryLowConfidenceItem(item) ? 'is-critical' : ''}`}>
                         {Math.round(item.confidence)}%
                       </span>
                     ) : null}
@@ -843,8 +899,20 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                   {item.reviewState === 'pending' ? (
                     <div className="correction-panel" role="group" aria-label={`${item.originalWord} 교정`}>
                       <div id={`correction-help-${item.id}`} className="correction-copy">
-                        <strong>{item.recovered ? '다른 인식 결과에서 추가로 발견했어요.' : '인식이 불확실해요.'}</strong>
-                        <span>추천 단어를 누르거나 원문을 확인해 주세요.</span>
+                        <strong>
+                          {isVeryLowConfidenceItem(item)
+                            ? '인식률이 매우 낮아요.'
+                            : isLowConfidenceReviewItem(item)
+                              ? '별도 검토가 필요한 후보예요.'
+                              : item.recovered
+                                ? '다른 인식 결과에서 추가로 발견했어요.'
+                                : '인식이 불확실해요.'}
+                        </strong>
+                        <span>
+                          {isLowConfidenceReviewItem(item)
+                            ? '철자를 직접 확인해야 저장할 수 있어요.'
+                            : '추천 단어를 누르거나 원문을 확인해 주세요.'}
+                        </span>
                       </div>
                       <div className="correction-suggestions">
                         {item.suggestions.map((suggestion) => (
@@ -916,7 +984,8 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                       </div>
                     ) : null}
                   </div>
-                </div>
+                  </div>
+                </Fragment>
               ))}
               {availableItems.length === 0 ? (
                 <div className="inline-empty">새로 저장할 수 있는 단어가 없어요.</div>
