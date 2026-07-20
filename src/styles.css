@@ -1432,6 +1432,12 @@ main {
   align-items: center;
 }
 
+.dictionary-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .dictionary-workspace {
   display: grid;
   align-items: start;
@@ -3237,6 +3243,11 @@ input[type="checkbox"] {
 
   .page-heading .button {
     width: 100%;
+  }
+
+  .dictionary-heading-actions {
+    width: 100%;
+    flex-direction: column;
   }
 
   .page-heading h1,
