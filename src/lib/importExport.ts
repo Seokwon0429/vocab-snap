@@ -2,6 +2,8 @@ import type {
   ImportIssue,
   ImportParseResult,
   VocabularyExport,
+  VocabularyFolder,
+  VocabularyFolderInput,
   WordEntry,
   WordEntryInput,
   WordQuizStats,
@@ -16,9 +18,12 @@ export interface ExportArtifact {
   filename: string
 }
 
-export const MAX_IMPORT_FILE_SIZE = 10 * 1024 * 1024
+export const MAX_IMPORT_FILE_SIZE = 100 * 1024 * 1024
 
 const CSV_HEADERS = [
+  'recordType',
+  'folderId',
+  'folderName',
   'id',
   'word',
   'meaning',
@@ -34,6 +39,9 @@ const CSV_HEADERS = [
 ] as const
 
 type UnknownRecord = Record<string, unknown>
+type CsvRecord = Partial<
+  Record<(typeof CSV_HEADERS)[number], string | number>
+>
 
 export class ImportFormatError extends Error {
   constructor(message: string) {
@@ -48,14 +56,25 @@ function isRecord(value: unknown): value is UnknownRecord {
 
 function csvEscape(value: unknown): string {
   const text = value === null || value === undefined ? '' : String(value)
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+  const protectedText = /^[=+\-@]/u.test(text) ? `'${text}` : text
+  return /[",\r\n]/.test(protectedText)
+    ? `"${protectedText.replace(/"/g, '""')}"`
+    : protectedText
 }
 
-export function createJsonExport(entries: readonly WordEntry[]): string {
+function restoreCsvFormulaText(value: string): string {
+  return /^'[=+\-@]/u.test(value) ? value.slice(1) : value
+}
+
+export function createJsonExport(
+  entries: readonly WordEntry[],
+  folders: readonly VocabularyFolder[] = [],
+): string {
   const payload: VocabularyExport = {
     app: '사진 영어 단어장',
-    schemaVersion: 1,
+    schemaVersion: 2,
     exportedAt: new Date().toISOString(),
+    folders: [...folders],
     entries: [...entries],
   }
 
@@ -63,21 +82,36 @@ export function createJsonExport(entries: readonly WordEntry[]): string {
 }
 
 /** UTF-8 CSV with a BOM so Korean text opens correctly in spreadsheet apps. */
-export function createCsvExport(entries: readonly WordEntry[]): string {
-  const rows = entries.map((entry) => [
-    entry.id,
-    entry.word,
-    entry.meaning,
-    entry.partOfSpeech,
-    entry.memo,
-    entry.createdAt,
-    entry.updatedAt,
-    entry.quizStats.attempts,
-    entry.quizStats.knownCount,
-    entry.quizStats.unknownCount,
-    entry.quizStats.lastResult ?? '',
-    entry.quizStats.lastReviewedAt ?? '',
-  ])
+export function createCsvExport(
+  entries: readonly WordEntry[],
+  folders: readonly VocabularyFolder[] = [],
+): string {
+  const folderNames = new Map(folders.map((folder) => [folder.id, folder.name]))
+  const folderRows: CsvRecord[] = folders.map((folder) => ({
+    recordType: 'folder',
+    folderId: folder.id,
+    folderName: folder.name,
+  }))
+  const wordRows: CsvRecord[] = entries.map((entry) => ({
+    recordType: 'word',
+    folderId: entry.folderId ?? '',
+    folderName: entry.folderId ? folderNames.get(entry.folderId) ?? '' : '',
+    id: entry.id,
+    word: entry.word,
+    meaning: entry.meaning,
+    partOfSpeech: entry.partOfSpeech,
+    memo: entry.memo,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+    attempts: entry.quizStats.attempts,
+    knownCount: entry.quizStats.knownCount,
+    unknownCount: entry.quizStats.unknownCount,
+    lastResult: entry.quizStats.lastResult ?? '',
+    lastReviewedAt: entry.quizStats.lastReviewedAt ?? '',
+  }))
+  const rows = [...folderRows, ...wordRows].map((record) =>
+    CSV_HEADERS.map((header) => record[header] ?? ''),
+  )
 
   return `\uFEFF${[CSV_HEADERS, ...rows]
     .map((row) => row.map(csvEscape).join(','))
@@ -87,10 +121,13 @@ export function createCsvExport(entries: readonly WordEntry[]): string {
 export function createExportArtifact(
   entries: readonly WordEntry[],
   format: ExportFormat,
+  folders: readonly VocabularyFolder[] = [],
 ): ExportArtifact {
   const date = new Date().toISOString().slice(0, 10)
   const content =
-    format === 'json' ? createJsonExport(entries) : createCsvExport(entries)
+    format === 'json'
+      ? createJsonExport(entries, folders)
+      : createCsvExport(entries, folders)
   const mimeType =
     format === 'json'
       ? 'application/json;charset=utf-8'
@@ -106,12 +143,13 @@ export function createExportArtifact(
 export function downloadExport(
   entries: readonly WordEntry[],
   format: ExportFormat,
+  folders: readonly VocabularyFolder[] = [],
 ): void {
   if (typeof document === 'undefined' || typeof URL === 'undefined') {
     throw new Error('파일 다운로드는 브라우저에서만 사용할 수 있습니다.')
   }
 
-  const artifact = createExportArtifact(entries, format)
+  const artifact = createExportArtifact(entries, format, folders)
   const url = URL.createObjectURL(artifact.blob)
   const link = document.createElement('a')
   link.href = url
@@ -132,6 +170,9 @@ function normalizeHeader(value: string): string {
 }
 
 const FIELD_ALIASES = {
+  recordType: ['recordtype', 'type', '레코드유형'],
+  folderId: ['folderid', 'folder', '폴더id'],
+  folderName: ['foldername', '폴더', '폴더명', '폴더이름'],
   id: ['id', '아이디'],
   word: ['word', '단어', '영단어', '영어단어'],
   meaning: ['meaning', '뜻', '한국어뜻', '의미'],
@@ -161,6 +202,18 @@ function getAliasedField(
     aliasSet.has(normalizeHeader(candidate)),
   )
   return key === undefined ? undefined : record[key]
+}
+
+function setAliasedField(
+  record: UnknownRecord,
+  aliases: readonly string[],
+  value: unknown,
+): void {
+  const aliasSet = new Set(aliases.map(normalizeHeader))
+  const key = Object.keys(record).find((candidate) =>
+    aliasSet.has(normalizeHeader(candidate)),
+  )
+  record[key ?? aliases[0]] = value
 }
 
 function optionalText(
@@ -321,6 +374,13 @@ function validateEntry(
   return {
     id: optionalText(getAliasedField(raw, FIELD_ALIASES.id), 'ID', row, issues),
     word,
+    folderId:
+      optionalText(
+        getAliasedField(raw, FIELD_ALIASES.folderId),
+        '폴더 ID',
+        row,
+        issues,
+      ) ?? null,
     meaning: optionalText(
       getAliasedField(raw, FIELD_ALIASES.meaning),
       '뜻',
@@ -355,7 +415,20 @@ function validateEntry(
   }
 }
 
-function validateEntries(rawEntries: readonly unknown[]): ImportParseResult {
+interface EntryValidationResult {
+  entries: WordEntryInput[]
+  issues: ImportIssue[]
+  rejectedCount: number
+}
+
+interface FolderValidationResult {
+  folders: VocabularyFolderInput[]
+  issues: ImportIssue[]
+  rejectedFolderCount: number
+  idRemap: Map<string, string>
+}
+
+function validateEntries(rawEntries: readonly unknown[]): EntryValidationResult {
   const entries: WordEntryInput[] = []
   const issues: ImportIssue[] = []
   const seen = new Set<string>()
@@ -387,6 +460,102 @@ function validateEntries(rawEntries: readonly unknown[]): ImportParseResult {
   return { entries, issues, rejectedCount }
 }
 
+function validateFolders(rawFolders: readonly unknown[]): FolderValidationResult {
+  const folders: VocabularyFolderInput[] = []
+  const issues: ImportIssue[] = []
+  const foldersById = new Map<string, VocabularyFolderInput>()
+  const foldersByName = new Map<string, VocabularyFolderInput>()
+  const idRemap = new Map<string, string>()
+  let rejectedFolderCount = 0
+
+  rawFolders.forEach((raw, index) => {
+    const row = index + 1
+    if (!isRecord(raw)) {
+      issues.push({ row, severity: 'error', message: '폴더 항목이 객체 형식이 아닙니다.' })
+      rejectedFolderCount += 1
+      return
+    }
+
+    const name = optionalText(
+      getAliasedField(raw, [...FIELD_ALIASES.folderName, 'name']),
+      '폴더 이름',
+      row,
+      issues,
+    )?.replace(/\s+/gu, ' ')
+    if (!name) {
+      issues.push({ row, severity: 'error', message: '폴더 이름이 비어 있습니다.' })
+      rejectedFolderCount += 1
+      return
+    }
+
+    const normalizedName = name.normalize('NFC').toLocaleLowerCase('ko-KR')
+    const requestedId = optionalText(
+      getAliasedField(raw, [...FIELD_ALIASES.folderId, 'id']),
+      '폴더 ID',
+      row,
+      issues,
+    )
+    const id = requestedId || `import-folder-${index + 1}`
+    const matchingId = foldersById.get(id)
+    const matchingName = foldersByName.get(normalizedName)
+    if (matchingId || matchingName) {
+      const retained = matchingName ?? matchingId
+      if (requestedId && retained?.id) idRemap.set(requestedId, retained.id)
+      issues.push({
+        row,
+        severity: 'warning',
+        message: `중복된 폴더 “${name}”은 한 번만 가져옵니다.`,
+      })
+      rejectedFolderCount += 1
+      return
+    }
+
+    const folder: VocabularyFolderInput = {
+      id,
+      name,
+      createdAt: optionalDate(
+        getAliasedField(raw, FIELD_ALIASES.createdAt),
+        '폴더 생성일',
+        row,
+        issues,
+      ),
+      updatedAt: optionalDate(
+        getAliasedField(raw, FIELD_ALIASES.updatedAt),
+        '폴더 수정일',
+        row,
+        issues,
+      ),
+    }
+    folders.push(folder)
+    foldersById.set(id, folder)
+    foldersByName.set(normalizedName, folder)
+  })
+
+  return { folders, issues, rejectedFolderCount, idRemap }
+}
+
+function repairFolderReferences(
+  entries: WordEntryInput[],
+  folders: readonly VocabularyFolderInput[],
+  issues: ImportIssue[],
+  idRemap: ReadonlyMap<string, string>,
+): void {
+  const validIds = new Set(folders.map((folder) => folder.id).filter(Boolean))
+  entries.forEach((entry, index) => {
+    if (entry.folderId && idRemap.has(entry.folderId)) {
+      entry.folderId = idRemap.get(entry.folderId) ?? null
+    }
+    if (entry.folderId && !validIds.has(entry.folderId)) {
+      issues.push({
+        row: index + 1,
+        severity: 'warning',
+        message: `“${entry.word}”의 폴더를 찾지 못해 미분류로 가져옵니다.`,
+      })
+      entry.folderId = null
+    }
+  })
+}
+
 export function parseJsonImport(text: string): ImportParseResult {
   let parsed: unknown
   try {
@@ -396,14 +565,16 @@ export function parseJsonImport(text: string): ImportParseResult {
   }
 
   let rawEntries: unknown
+  let rawFolders: unknown = []
   const topLevelIssues: ImportIssue[] = []
   if (Array.isArray(parsed)) {
     rawEntries = parsed
   } else if (isRecord(parsed)) {
     rawEntries = parsed.entries ?? parsed.words ?? parsed.vocabulary
+    rawFolders = parsed.folders ?? []
     if (
       typeof parsed.schemaVersion === 'number' &&
-      parsed.schemaVersion > 1
+      parsed.schemaVersion > 2
     ) {
       topLevelIssues.push({
         row: 1,
@@ -420,9 +591,34 @@ export function parseJsonImport(text: string): ImportParseResult {
     )
   }
 
-  const result = validateEntries(rawEntries)
-  result.issues.unshift(...topLevelIssues)
-  return result
+  const folderItems = Array.isArray(rawFolders) ? rawFolders : []
+  if (!Array.isArray(rawFolders)) {
+    topLevelIssues.push({
+      row: 1,
+      severity: 'warning',
+      message: '폴더 목록 형식이 올바르지 않아 폴더 없이 가져옵니다.',
+    })
+  }
+
+  const entryResult = validateEntries(rawEntries)
+  const folderResult = validateFolders(folderItems)
+  const issues = [
+    ...topLevelIssues,
+    ...folderResult.issues,
+    ...entryResult.issues,
+  ]
+  repairFolderReferences(
+    entryResult.entries,
+    folderResult.folders,
+    issues,
+    folderResult.idRemap,
+  )
+  return {
+    ...entryResult,
+    folders: folderResult.folders,
+    rejectedFolderCount: folderResult.rejectedFolderCount,
+    issues,
+  }
 }
 
 function parseCsvRows(text: string): string[][] {
@@ -477,7 +673,7 @@ function parseCsvRows(text: string): string[][] {
   if (row.some((cell) => cell.trim() !== '')) {
     rows.push(row)
   }
-  return rows
+  return rows.map((cells) => cells.map(restoreCsvFormulaText))
 }
 
 export function parseCsvImport(text: string): ImportParseResult {
@@ -496,12 +692,66 @@ export function parseCsvImport(text: string): ImportParseResult {
     )
   }
 
-  const rawEntries = rows.slice(1).map((cells) =>
+  const records = rows.slice(1).map((cells) =>
     Object.fromEntries(
       headers.map((header, index) => [header, cells[index] ?? '']),
     ),
   )
-  return validateEntries(rawEntries)
+  const rawFolders: UnknownRecord[] = []
+  const rawEntries: UnknownRecord[] = []
+
+  for (const record of records) {
+    const recordType = String(
+      getAliasedField(record, FIELD_ALIASES.recordType) ?? 'word',
+    )
+      .trim()
+      .toLocaleLowerCase('en-US')
+    if (recordType === 'folder' || recordType === '폴더') rawFolders.push(record)
+    else rawEntries.push(record)
+  }
+
+  const knownFolderNames = new Map<string, string>()
+  for (const folder of rawFolders) {
+    const name = String(getAliasedField(folder, FIELD_ALIASES.folderName) ?? '').trim()
+    const id = String(getAliasedField(folder, FIELD_ALIASES.folderId) ?? '').trim()
+    if (name && id) {
+      knownFolderNames.set(name.normalize('NFC').toLocaleLowerCase('ko-KR'), id)
+    }
+  }
+
+  for (const [index, entry] of rawEntries.entries()) {
+    const folderName = String(
+      getAliasedField(entry, FIELD_ALIASES.folderName) ?? '',
+    ).trim()
+    let folderId = String(
+      getAliasedField(entry, FIELD_ALIASES.folderId) ?? '',
+    ).trim()
+    if (!folderName) continue
+
+    const normalizedName = folderName.normalize('NFC').toLocaleLowerCase('ko-KR')
+    folderId = folderId || knownFolderNames.get(normalizedName) || `csv-folder-${index + 1}`
+    if (!knownFolderNames.has(normalizedName)) {
+      knownFolderNames.set(normalizedName, folderId)
+      rawFolders.push({ folderId, folderName })
+    }
+    setAliasedField(entry, FIELD_ALIASES.folderId, folderId)
+  }
+
+  const entryResult = validateEntries(rawEntries)
+  const folderResult = validateFolders(rawFolders)
+  const issues = [...folderResult.issues, ...entryResult.issues]
+  repairFolderReferences(
+    entryResult.entries,
+    folderResult.folders,
+    issues,
+    folderResult.idRemap,
+  )
+  return {
+    ...entryResult,
+    folders: folderResult.folders,
+    rejectedFolderCount: folderResult.rejectedFolderCount,
+    issues,
+  }
 }
 
 export function parseImportText(
@@ -533,7 +783,7 @@ function detectImportFormat(file: File, text: string): ImportFormat {
 
 export async function parseImportFile(file: File): Promise<ImportParseResult> {
   if (file.size > MAX_IMPORT_FILE_SIZE) {
-    throw new ImportFormatError('가져오기 파일은 10MB 이하여야 합니다.')
+    throw new ImportFormatError('가져오기 파일은 100MB 이하여야 합니다.')
   }
   if (file.size === 0) {
     throw new ImportFormatError('가져오기 파일이 비어 있습니다.')
