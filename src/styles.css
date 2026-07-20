@@ -1432,6 +1432,252 @@ main {
   align-items: center;
 }
 
+.dictionary-workspace {
+  display: grid;
+  align-items: start;
+  grid-template-columns: minmax(210px, 232px) minmax(0, 1fr);
+  gap: 15px;
+}
+
+.dictionary-main {
+  min-width: 0;
+}
+
+.folder-panel {
+  position: sticky;
+  top: 94px;
+  max-height: calc(100vh - 116px);
+  min-width: 0;
+  padding: 14px 11px 12px;
+  overflow-y: auto;
+  border-radius: 18px;
+}
+
+.folder-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 10px 7px;
+  gap: 10px;
+}
+
+.folder-panel-kicker {
+  display: block;
+  margin-bottom: 3px;
+  color: #98a49e;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+}
+
+.folder-panel-header h2 {
+  display: flex;
+  margin: 0;
+  align-items: center;
+  color: var(--ink);
+  gap: 7px;
+  font-family: Georgia, serif;
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.folder-add-button,
+.folder-form-action,
+.folder-actions button {
+  display: inline-grid;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  color: var(--green-dark);
+  background: transparent;
+}
+
+.folder-add-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--green-pale);
+}
+
+.folder-add-button:hover:not(:disabled) {
+  background: var(--green-soft);
+}
+
+.folder-inline-form {
+  display: grid;
+  margin: 0 2px 9px;
+  padding: 6px;
+  align-items: center;
+  border: 1px solid #cfdad1;
+  border-radius: 11px;
+  background: #f8faf7;
+  grid-template-columns: minmax(0, 1fr) 29px 29px;
+  gap: 3px;
+}
+
+.folder-inline-form input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--ink);
+  background: white;
+  outline: 0;
+  font-size: 11px;
+}
+
+.folder-inline-form input:focus {
+  box-shadow: 0 0 0 2px rgba(71, 112, 92, 0.16);
+}
+
+.folder-form-action {
+  width: 29px;
+  height: 29px;
+  border-radius: 7px;
+}
+
+.folder-form-action:hover:not(:disabled),
+.folder-actions button:hover:not(:disabled) {
+  background: var(--green-soft);
+}
+
+.folder-navigation,
+.folder-list {
+  min-width: 0;
+}
+
+.folder-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  gap: 3px;
+}
+
+.folder-list-item {
+  min-width: 0;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  transition: border-color 130ms ease, background 130ms ease, transform 130ms ease;
+}
+
+.folder-list-item.is-drag-over {
+  border-color: #93b09d;
+  background: var(--green-pale);
+  transform: translateX(2px);
+}
+
+.folder-row {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px;
+}
+
+.folder-filter-button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 7px 8px;
+  align-items: center;
+  border: 0;
+  border-radius: 9px;
+  color: #627069;
+  background: transparent;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 7px;
+  text-align: left;
+}
+
+.folder-filter-button:hover,
+.folder-list-item.is-drag-over .folder-filter-button {
+  color: var(--green-dark);
+  background: #f3f7f3;
+}
+
+.folder-filter-button.is-active {
+  color: var(--green-dark);
+  background: var(--green-soft);
+  font-weight: 800;
+}
+
+.folder-filter-button.is-active svg {
+  fill: rgba(71, 112, 92, 0.13);
+}
+
+.folder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.folder-count {
+  display: inline-flex;
+  min-width: 25px;
+  min-height: 22px;
+  padding: 0 6px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #78847e;
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+}
+
+.folder-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.folder-actions button {
+  width: 29px;
+  height: 29px;
+  border-radius: 7px;
+  color: #7b8881;
+}
+
+.folder-actions button.danger {
+  color: var(--danger);
+}
+
+.folder-actions button.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+.folder-rename-form {
+  margin: 0;
+}
+
+.folder-loading,
+.folder-drag-hint {
+  margin: 10px 5px 0;
+  color: #8a958f;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.folder-drag-hint {
+  display: flex;
+  padding-top: 10px;
+  align-items: flex-start;
+  border-top: 1px solid #edf0ed;
+  gap: 4px;
+}
+
+.folder-drag-hint svg {
+  flex: 0 0 auto;
+}
+
 .dictionary-toolbar {
   display: flex;
   align-items: center;
@@ -1590,6 +1836,34 @@ main {
   font-weight: 750;
 }
 
+.selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.selection-move-field {
+  display: flex;
+  min-height: 40px;
+  padding: 0 8px 0 11px;
+  align-items: center;
+  border: 1px solid #c7d8cb;
+  border-radius: 10px;
+  background: white;
+  gap: 6px;
+}
+
+.selection-move-field select {
+  min-width: 126px;
+  height: 38px;
+  border: 0;
+  color: var(--green-dark);
+  background: transparent;
+  outline: 0;
+  font-size: 11px;
+  font-weight: 750;
+}
+
 .dictionary-summary {
   display: flex;
   align-items: center;
@@ -1650,7 +1924,17 @@ input[type="checkbox"] {
 }
 
 .word-table tbody tr {
-  transition: background 140ms ease;
+  cursor: grab;
+  transition: background 140ms ease, opacity 140ms ease;
+}
+
+.word-table tbody tr:active {
+  cursor: grabbing;
+}
+
+.word-table tbody tr.is-dragging,
+.word-list-card.is-dragging {
+  opacity: 0.42;
 }
 
 .word-table tbody tr:hover,
@@ -1696,6 +1980,25 @@ input[type="checkbox"] {
 .word-cell {
   display: flex;
   align-items: center;
+  gap: 5px;
+}
+
+.drag-handle,
+.card-drag-handle {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #a0aaa5;
+}
+
+.word-cell-copy {
+  min-width: 0;
+}
+
+.word-cell-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
   gap: 7px;
 }
 
@@ -1706,6 +2009,24 @@ input[type="checkbox"] {
   font-family: Georgia, serif;
   font-size: 17px;
   letter-spacing: -0.01em;
+}
+
+.entry-folder-label {
+  display: inline-flex;
+  max-width: 100%;
+  margin-top: 3px;
+  align-items: center;
+  overflow: hidden;
+  color: #88948e;
+  gap: 3px;
+  font-size: 8px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry-folder-label svg {
+  flex: 0 0 auto;
 }
 
 .speak-button {
@@ -1894,7 +2215,8 @@ input[type="checkbox"] {
 }
 
 .field-label input,
-.field-label textarea {
+.field-label textarea,
+.field-label select {
   width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: 11px;
@@ -1909,6 +2231,11 @@ input[type="checkbox"] {
   padding: 0 12px;
 }
 
+.field-label select {
+  min-height: 45px;
+  padding: 0 12px;
+}
+
 .field-label textarea {
   min-height: 94px;
   padding: 11px 12px;
@@ -1917,10 +2244,19 @@ input[type="checkbox"] {
 }
 
 .field-label input:focus,
-.field-label textarea:focus {
+.field-label textarea:focus,
+.field-label select:focus {
   border-color: #8fa997;
   background: white;
   box-shadow: 0 0 0 3px rgba(71, 112, 92, 0.1);
+}
+
+.field-help {
+  margin-top: -2px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1.45;
 }
 
 .full-width {
@@ -2506,6 +2842,45 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 900px) {
+  .dictionary-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .folder-panel {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .folder-panel-header {
+    padding-bottom: 8px;
+  }
+
+  .folder-inline-form {
+    max-width: 430px;
+  }
+
+  .folder-list {
+    display: flex;
+    padding: 2px 1px 8px;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+
+  .folder-list-item {
+    min-width: 0;
+    flex: 0 0 196px;
+  }
+
+  .folder-list-item-system {
+    flex-basis: 150px;
+  }
+
+  .folder-drag-hint {
+    margin-top: 3px;
+  }
+
   .hero-grid {
     grid-template-columns: 1fr;
     gap: 12px;
@@ -2604,6 +2979,22 @@ input[type="checkbox"] {
 
   .dictionary-toolbar {
     padding: 10px;
+  }
+
+  .dictionary-workspace {
+    gap: 11px;
+  }
+
+  .folder-panel {
+    padding: 12px 9px 10px;
+  }
+
+  .folder-list-item {
+    flex-basis: 180px;
+  }
+
+  .folder-list-item-system {
+    flex-basis: 142px;
   }
 
   .search-field {
@@ -2710,6 +3101,16 @@ input[type="checkbox"] {
   .card-actions {
     display: flex;
     flex-direction: column;
+  }
+
+  .card-drag-handle {
+    width: 36px;
+    height: 29px;
+    cursor: grab;
+  }
+
+  .word-list-card:active .card-drag-handle {
+    cursor: grabbing;
   }
 
   .quiz-view__heading {
@@ -2918,6 +3319,22 @@ input[type="checkbox"] {
     grid-template-columns: 1fr 115px;
   }
 
+  .folder-panel-header h2 {
+    font-size: 18px;
+  }
+
+  .folder-list-item {
+    flex-basis: 166px;
+  }
+
+  .folder-list-item-system {
+    flex-basis: 132px;
+  }
+
+  .folder-drag-hint {
+    display: none;
+  }
+
   .search-field {
     grid-column: 1 / 2;
   }
@@ -2962,6 +3379,21 @@ input[type="checkbox"] {
 
   .selection-bar .button {
     width: 100%;
+  }
+
+  .selection-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .selection-move-field {
+    min-width: 0;
+  }
+
+  .selection-move-field select {
+    width: 100%;
+    min-width: 0;
   }
 
   .form-grid {

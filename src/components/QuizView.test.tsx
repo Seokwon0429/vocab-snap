@@ -11,6 +11,7 @@ const entry: WordEntry = {
   meaning: '호기심이 많은',
   partOfSpeech: '형용사',
   memo: 'curious about space',
+  folderId: null,
   createdAt: '2026-07-20T00:00:00.000Z',
   updatedAt: '2026-07-20T00:00:00.000Z',
   quizStats: {

@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 2,
+  "source": "https://kaikki.org/kowiktionary/raw-wiktextract-data.jsonl.gz",
+  "sourcePage": "https://kaikki.org/kowiktionary/rawdata.html",
+  "license": "CC-BY-SA-4.0",
+  "extractedFrom": "Korean Wiktionary via Kaikki.org/Wiktextract",
+  "sourceSnapshotRetrievedAt": "2026-07-20T07:43:54.637Z",
+  "entryCount": 13750,
+  "parsedRows": 355997,
+  "chunks": {
+    "a": {
+      "entries": 1347,
+      "bytes": 96844,
+      "sha256": "c5e592b482ac322a345b2fc5d61a57bbfe6500bd49f72f9fbcbc02be54928083"
+    },
+    "b": {
+      "entries": 762,
+      "bytes": 51763,
+      "sha256": "32b978e34a1e069aa68b326c051566289a0dd1a2ba8291c3f17f748092de8adc"
+    },
+    "c": {
+      "entries": 1349,
+      "bytes": 100158,
+      "sha256": "4e272997e8762e35248792a7fa090c6edcb52eebeaf1145a69dd60f8a326d1ed"
+    },
+    "d": {
+      "entries": 840,
+      "bytes": 63367,
+      "sha256": "a1f40d0784675e017fe1ad2d4b25ef486886afa11df83e73e61159841a1dc222"
+    },
+    "e": {
+      "entries": 650,
+      "bytes": 46867,
+      "sha256": "cfa54f6af585913757657d5b15571723749c14e1ea234482202c0f7f78d4ba8c"
+    },
+    "f": {
+      "entries": 533,
+      "bytes": 39266,
+      "sha256": "3d1acd99d69f6808685e7be36b8ed03fe2f379a26e7d154e40efa30310bd1dbc"
+    },
+    "g": {
+      "entries": 435,
+      "bytes": 30591,
+      "sha256": "15bc6401674ae6b7a73c0049fcd6fb85968660333a551fb973c111e66306259d"
+    },
+    "h": {
+      "entries": 518,
+      "bytes": 36825,
+      "sha256": "778e634927a3077bceca1af6eab8c7845172bd628ebbffe18a25111b61e46196"
+    },
+    "i": {
+      "entries": 644,
+      "bytes": 48144,
+      "sha256": "42d226cbbaa0075ec675a0e08e4bbd02529918288ffbcb7e531876071a75ee0b"
+    },
+    "j": {
+      "entries": 167,
+      "bytes": 10359,
+      "sha256": "351275f4bf0cd1b778c7253e9f7f84b484c62d9d8bf7767303433b976eb1de99"
+    },
+    "k": {
+      "entries": 164,
+      "bytes": 10256,
+      "sha256": "578ebbd3809b76c2fa4be5925df2e4187d3e08b7cc30a33f8bab77ba3fef785a"
+    },
+    "l": {
+      "entries": 443,
+      "bytes": 31602,
+      "sha256": "881271c200f85577113a64d9ff0f33672093eee943cca2e7482410f2bb83c9f4"
+    },
+    "m": {
+      "entries": 710,
+      "bytes": 49028,
+      "sha256": "7ba530506a8f7d2bd8e540f4b28112d200c6bf6b0e3a2c5917598ef65b3b1f4c"
+    },
+    "n": {
+      "entries": 285,
+      "bytes": 19231,
+      "sha256": "c2035b31b1b2581e0f0ebeb0b874722dca63280184880663a8580529572c4a73"
+    },
+    "o": {
+      "entries": 319,
+      "bytes": 24779,
+      "sha256": "0965df8af1562b3c728afced1edf6d120bccbc29cbc54841c0f450a812df9b19"
+    },
+    "p": {
+      "entries": 1024,
+      "bytes": 76436,
+      "sha256": "13c7ae6d15fcb532487a6aa3e5bb74f1619ad7ff93452aa6a5e4b7f2468352b9"
+    },
+    "q": {
+      "entries": 50,
+      "bytes": 4565,
+      "sha256": "46aa4a4f2b635a7520a64d048f61ad9fa59b2509f51744bed614de8d79805282"
+    },
+    "r": {
+      "entries": 678,
+      "bytes": 52613,
+      "sha256": "c9905f8ad7f9bb1fb6e9a347e9f708c49da8398064105c9b6420eab2f2ed5f28"
+    },
+    "s": {
+      "entries": 1320,
+      "bytes": 96131,
+      "sha256": "b7edc36ea6154a89f5aa7ffa404572dc1353fe3b8d8e5ecc8894f97d01afb01e"
+    },
+    "t": {
+      "entries": 604,
+      "bytes": 44412,
+      "sha256": "9b121ac0b134271f5fa1c68a5f282c7ff735a26227e290baae0e5cd59bd2ab0f"
+    },
+    "u": {
+      "entries": 277,
+      "bytes": 20314,
+      "sha256": "9729de1be8c677739cca67e884630013a4174533b1d70f6b6baadcf5f9601b7c"
+    },
+    "v": {
+      "entries": 206,
+      "bytes": 14661,
+      "sha256": "0b04a7e47bc6e35fc15efd9686d4ee2868f5847ef1c213134bd7e2331270a796"
+    },
+    "w": {
+      "entries": 330,
+      "bytes": 25857,
+      "sha256": "8eb40c2697d32ca1f3bf3a4f8805eebab54ce72f9910012f22c44c71af3e8eb3"
+    },
+    "x": {
+      "entries": 13,
+      "bytes": 1085,
+      "sha256": "01113e1342ff45402ff920ffa3aadf02cb51e8e74ec95d76b2d4d1adae1aa9bb"
+    },
+    "y": {
+      "entries": 48,
+      "bytes": 4132,
+      "sha256": "899fbc312451ffc80585e23e8260da817b4770a732b7acdd716b2a6f84ef42e7"
+    },
+    "z": {
+      "entries": 34,
+      "bytes": 2493,
+      "sha256": "fc53e6000b16b40bd47e41e88b2ec48b814c7b0f312eebd5c094f48df30ab0d1"
+    }
+  }
+}

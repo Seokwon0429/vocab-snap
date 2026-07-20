@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import type { WordEntry } from '../types'
 import { addMany } from '../lib/db'
+import { enrichWithKoreanDefinitions } from '../lib/koreanDictionary'
 import {
   OcrError,
   recognizeImageText,
@@ -450,7 +451,8 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
 
     setSaving(true)
     try {
-      const result = await addMany(selected)
+      const enriched = await enrichWithKoreanDefinitions(selected)
+      const result = await addMany(enriched.entries)
       await onWordsAdded(result.added.length)
       resetAll()
       if (result.duplicates.length) {

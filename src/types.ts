@@ -19,6 +19,8 @@ export interface WordEntry {
   meaning: string
   partOfSpeech: string
   memo: string
+  /** Folder containing this word. `null` represents the built-in unfiled view. */
+  folderId: string | null
   createdAt: string
   updatedAt: string
   quizStats: WordQuizStats
@@ -32,9 +34,34 @@ export interface WordEntryInput {
   meaning?: string
   partOfSpeech?: string
   memo?: string
+  /** Omit to preserve an existing folder; use `null` to move to unfiled. */
+  folderId?: string | null
   createdAt?: string
   updatedAt?: string
   quizStats?: Partial<WordQuizStats>
+}
+
+/** A user-created vocabulary folder stored in IndexedDB. */
+export interface VocabularyFolder {
+  id: string
+  name: string
+  /** Unicode-normalized, case-insensitive key used to prevent duplicates. */
+  normalizedName: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** Shape accepted when a folder is created or restored from a backup. */
+export interface VocabularyFolderInput {
+  id?: string
+  name: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface DeleteFolderResult {
+  deleted: boolean
+  unfiledCount: number
 }
 
 /** Aggregate statistics suitable for the quiz summary UI. */
@@ -57,6 +84,8 @@ export interface AddManyResult {
 
 export interface ImportResult extends AddManyResult {
   mode: ImportMode
+  foldersAdded: VocabularyFolder[]
+  foldersReused: VocabularyFolder[]
 }
 
 export type ImportIssueSeverity = 'warning' | 'error'
@@ -70,13 +99,16 @@ export interface ImportIssue {
 
 export interface ImportParseResult {
   entries: WordEntryInput[]
+  folders: VocabularyFolderInput[]
   issues: ImportIssue[]
   rejectedCount: number
+  rejectedFolderCount: number
 }
 
 export interface VocabularyExport {
   app: '사진 영어 단어장'
-  schemaVersion: 1
+  schemaVersion: 2
   exportedAt: string
+  folders: VocabularyFolder[]
   entries: WordEntry[]
 }

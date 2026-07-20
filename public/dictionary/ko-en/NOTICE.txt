@@ -1,0 +1,10 @@
+WordLens 오프라인 한글 뜻 사전
+
+이 데이터는 한국어 위키낱말사전을 Kaikki.org/Wiktextract로 추출한 자료에서
+영어 표제어와 한국어 뜻을 선별·정규화하고, 첫 글자별 JSON으로 재구성했습니다.
+원본: https://kaikki.org/kowiktionary/rawdata.html
+정적 스냅샷 생성 시각: 2026-07-20T07:43:54.637Z
+이 파생 데이터는 Creative Commons Attribution-ShareAlike 4.0을 선택해 배포합니다.
+CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0/
+
+자동 뜻과 품사는 학습 보조용 제안이며 문맥에 따라 사용자가 수정해야 할 수 있습니다.
