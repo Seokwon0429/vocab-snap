@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   calculateTargetSize,
   consolidateOcrWordEvidence,
+  flattenOcrLines,
   flattenOcrWords,
   scoreOcrPasses,
 } from './ocr'
@@ -52,6 +53,32 @@ describe('한·영 OCR 결과 선택', () => {
       },
     ])
     expect(flattenOcrWords(null)).toEqual([])
+  })
+
+  it('선택된 OCR 패스의 줄 좌표와 단어 순서를 보존한다', () => {
+    const lines = flattenOcrLines([
+      {
+        paragraphs: [{
+          lines: [{
+            text: 'apple 사과',
+            confidence: 91,
+            bbox: { x0: 5, y0: 8, x1: 150, y1: 34 },
+            words: [
+              { text: 'apple', confidence: 93, bbox: { x0: 5, y0: 8, x1: 70, y1: 34 } },
+              { text: '사과', confidence: 89, bbox: { x0: 90, y0: 8, x1: 150, y1: 34 } },
+            ],
+          }],
+        }],
+      },
+    ])
+
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatchObject({
+      text: 'apple 사과',
+      confidence: 91,
+      bbox: { x0: 5, y0: 8, x1: 150, y1: 34 },
+    })
+    expect(lines[0].words.map((word) => word.text)).toEqual(['apple', '사과'])
   })
 
   it('한 단어만 높은 결과보다 충분한 글자를 안정적으로 읽은 패스를 고른다', () => {
