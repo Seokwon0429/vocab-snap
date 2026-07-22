@@ -1,4 +1,5 @@
-import { BookOpen, Camera, GraduationCap } from 'lucide-react'
+import { BookOpen, Camera, GraduationCap, LoaderCircle, LogIn, LogOut, UserRound } from 'lucide-react'
+import type { AuthUser } from '../lib/auth'
 
 export type AppTab = 'photo' | 'dictionary' | 'quiz'
 
@@ -6,6 +7,10 @@ interface AppHeaderProps {
   activeTab: AppTab
   wordCount: number
   onTabChange: (tab: AppTab) => void
+  user: AuthUser | null
+  authReady: boolean
+  onOpenAuth: () => void
+  onLogout: () => void
 }
 
 const navItems = [
@@ -14,7 +19,15 @@ const navItems = [
   { id: 'quiz' as const, label: '퀴즈', icon: GraduationCap },
 ]
 
-export function AppHeader({ activeTab, wordCount, onTabChange }: AppHeaderProps) {
+export function AppHeader({
+  activeTab,
+  wordCount,
+  onTabChange,
+  user,
+  authReady,
+  onOpenAuth,
+  onLogout,
+}: AppHeaderProps) {
   return (
     <header className="app-header">
       <div className="header-inner">
@@ -33,25 +46,50 @@ export function AppHeader({ activeTab, wordCount, onTabChange }: AppHeaderProps)
           </span>
         </button>
 
-        <nav className="main-nav" aria-label="주요 메뉴">
-          {navItems.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              className={`nav-button ${activeTab === id ? 'is-active' : ''}`}
-              onClick={() => onTabChange(id)}
-              aria-current={activeTab === id ? 'page' : undefined}
-            >
-              <Icon size={18} strokeWidth={2} aria-hidden="true" />
-              <span>{label}</span>
-              {id === 'dictionary' && wordCount > 0 ? (
-                <span className="nav-count" aria-label={`${wordCount}개`}>
-                  {wordCount > 999 ? '999+' : wordCount}
+        <div className="header-actions">
+          <nav className="main-nav" aria-label="주요 메뉴">
+            {navItems.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                className={`nav-button ${activeTab === id ? 'is-active' : ''}`}
+                onClick={() => onTabChange(id)}
+                aria-current={activeTab === id ? 'page' : undefined}
+              >
+                <Icon size={18} strokeWidth={2} aria-hidden="true" />
+                <span>{label}</span>
+                {id === 'dictionary' && wordCount > 0 ? (
+                  <span className="nav-count" aria-label={`${wordCount}개`}>
+                    {wordCount > 999 ? '999+' : wordCount}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </nav>
+
+          <div className="auth-controls">
+            {!authReady ? (
+              <span className="auth-loading" aria-label="로그인 상태 확인 중">
+                <LoaderCircle size={17} className="spin-icon" aria-hidden="true" />
+              </span>
+            ) : user ? (
+              <>
+                <span className="account-chip" title={`${user.username} 계정으로 로그인됨`}>
+                  <UserRound size={15} aria-hidden="true" />
+                  <span>{user.username}</span>
                 </span>
-              ) : null}
-            </button>
-          ))}
-        </nav>
+                <button type="button" className="auth-icon-button" onClick={onLogout} aria-label="로그아웃">
+                  <LogOut size={17} aria-hidden="true" />
+                </button>
+              </>
+            ) : (
+              <button type="button" className="login-button" onClick={onOpenAuth}>
+                <LogIn size={16} aria-hidden="true" />
+                <span>로그인</span>
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </header>
   )

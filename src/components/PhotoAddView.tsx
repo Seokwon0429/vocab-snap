@@ -16,7 +16,7 @@ import {
   X,
 } from 'lucide-react'
 import type { WordEntry } from '../types'
-import { addMany } from '../lib/db'
+import { addMany } from '../lib/storage'
 import {
   enrichWithKoreanDefinitions,
   lookupKoreanDefinitions,

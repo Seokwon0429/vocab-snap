@@ -2,7 +2,7 @@
 
 [🌐 WordLens 바로 사용하기](https://seokwon0429.github.io/vocab-snap/)
 
-책이나 프린트의 영어 문장을 사진으로 인식하고, 필요한 단어만 골라 개인 단어장과 카드 퀴즈로 학습하는 정적 웹 앱입니다. 서버, 유료 API, API 키가 필요하지 않습니다.
+책이나 프린트의 영어 문장을 사진으로 인식하고, 필요한 단어만 골라 개인 단어장과 카드 퀴즈로 학습하는 웹 앱입니다. 비로그인 상태에서는 브라우저에 저장하고, 로그인하면 사용자가 직접 운영하는 WordLens 서버에 사용자별로 저장합니다. 유료 OCR API나 API 키는 필요하지 않습니다.
 
 ## 주요 기능
 
@@ -14,7 +14,8 @@
 - 단어별 OCR 신뢰도 표시와 로컬 영어 사전 기반 교정 후보(자동 변경 없이 사용자 확인)
 - 저장 전 선택·해제·수정·삭제 검토 화면
 - 저장할 때 오프라인 한영 사전으로 한국어 뜻·품사 자동 제안
-- IndexedDB 단어장 CRUD, 검색·정렬·일괄 삭제와 사용자 폴더
+- IndexedDB 게스트 단어장과 로그인 계정별 SQLite 서버 단어장
+- 회원가입·로그인·로그아웃과 사용자별 단어·폴더 격리
 - 단어를 폴더로 드래그하거나 선택한 여러 단어를 한 번에 이동
 - JSON/CSV 전체 백업 및 다시 가져오기
 - 기기에 설치된 영어 음성을 이용한 발음 듣기
@@ -27,19 +28,22 @@
 - OCR Worker, 엔진, 한국어·영어 모델과 교정·한글 뜻 사전은 빌드할 때 정적 파일에 포함되며 실행 중에는 배포 사이트와 같은 출처에서만 읽습니다.
 - 교정은 브라우저에서 `nspell`과 정적 `dictionary-en` 사전으로 실행되며, 인식된 문장을 외부 API로 보내지 않습니다.
 - 자동 뜻·품사 채움도 첫 글자에 해당하는 정적 사전 조각만 브라우저에서 읽으며 단어를 외부 서비스에 전송하지 않습니다. 자동 제안은 문맥에 따라 직접 수정할 수 있습니다.
-- 단어와 학습 통계는 현재 브라우저의 IndexedDB에만 저장됩니다.
+- 비로그인 단어와 학습 통계는 현재 브라우저의 IndexedDB에 저장됩니다.
+- 로그인한 단어와 학습 통계만 사용자가 설정한 WordLens 서버로 전송되어 사용자별 SQLite 공간에 저장됩니다.
+- 비밀번호는 scrypt 해시로 저장하고 로그인 세션 토큰은 SHA-256 해시만 서버에 저장합니다.
+- 브라우저의 로그인 토큰은 현재 탭의 `sessionStorage`에만 두므로 새로고침에는 유지되지만 브라우저 창을 닫으면 다시 로그인해야 합니다.
 - 발음은 `localService`인 기기 내장 영어 음성만 사용합니다. 원격 음성은 선택하지 않습니다.
-- Content Security Policy의 `connect-src 'self'`로 실행 중 외부 전송을 차단합니다.
+- Content Security Policy는 같은 출처, 로컬 개발 서버, Tailscale `*.ts.net` HTTPS 서버 연결만 허용합니다.
 
-브라우저 데이터를 삭제하면 단어장도 지워집니다. 중요한 단어는 내보내기 기능으로 JSON 또는 CSV 백업을 권장합니다.
+게스트 단어장은 브라우저 데이터를 삭제하면 함께 지워집니다. 로그인 단어장은 서버의 SQLite 파일에 남습니다. 두 모드 모두 중요한 단어는 JSON 또는 CSV 백업을 권장합니다.
 
-앱 자체에는 저장 단어 개수 상한이 없습니다. 실제 저장 가능량은 브라우저가 해당 사이트에 허용한 IndexedDB 용량에 따라 달라집니다.
+게스트 모드에는 앱 내부 단어 개수 상한이 없고 브라우저의 IndexedDB 용량을 사용합니다. 서버 모드는 기본적으로 계정 50개, 사용자당 단어 20,000개, 폴더 500개, 전체 SQLite 1GiB로 제한하며 `.env.server`에서 변경할 수 있습니다.
 
 ## 로컬 실행
 
 ### 요구 사항
 
-- Node.js `20.19+` 또는 `22.12+`
+- Node.js `22.13+` 또는 최신 LTS
 - pnpm 11 (Corepack 사용 권장)
 
 ### 단계
@@ -48,12 +52,43 @@
 corepack enable
 corepack prepare pnpm@11.9.0 --activate
 pnpm install
+pnpm server
+```
+
+다른 터미널에서 프론트엔드를 실행합니다.
+
+```bash
 pnpm dev
 ```
 
 터미널에 표시된 로컬 주소(기본값 `http://localhost:5173`)를 브라우저에서 엽니다.
 
 첫 실행 또는 첫 빌드 때 공개 한국어·영어 OCR 모델을 한 번 내려받아 `public/ocr`에 준비하고, 설치된 영어 교정 사전도 같은 폴더에 복사합니다. 한글 뜻 사전은 저장소에 포함된 정적 조각을 사용하며, 없을 때만 공개 Wiktionary 추출 데이터로 다시 생성합니다. 이 과정에는 사용자 사진이나 단어 데이터가 포함되지 않습니다. 생성된 OCR 자산은 Git에서 제외되며 빌드할 때 자동으로 다시 준비됩니다.
+
+## 미니 서버 설정
+
+서버는 기본적으로 `127.0.0.1:8787`에서만 수신하고 데이터는 `server/data/wordlens.sqlite`에 저장합니다.
+
+```powershell
+Copy-Item .env.server.example .env.server
+pnpm server
+```
+
+- 기본값은 `invite` 모드입니다. 초대 코드를 비워 두면 서버를 시작할 때 임시 코드를 생성해 터미널에 표시합니다.
+- 같은 초대 코드를 계속 쓰려면 `.env.server`의 `WORDLENS_INVITE_CODE`에 추측하기 어려운 긴 값을 넣습니다.
+- 누구나 가입하게 하려면 `WORDLENS_REGISTRATION_MODE=open`, 신규 가입을 멈추려면 `closed`로 설정합니다. 공개 모드는 봇 가입 위험이 있으므로 상한과 서버 용량을 함께 관리해야 합니다.
+- 서버 PC에서는 절전 모드를 끄고 가능하면 유선 네트워크를 사용합니다.
+- Windows에서 직접 실행할 때는 `powershell -ExecutionPolicy Bypass -File scripts/start-wordlens-server.ps1`을 사용할 수 있습니다.
+- 백업할 때는 서버를 종료한 뒤 `server/data/wordlens.sqlite`를 다른 저장장치에 복사합니다.
+
+외부 공개는 공유기 포트포워딩 대신 Tailscale Funnel을 권장합니다.
+
+```powershell
+tailscale funnel --bg http://127.0.0.1:8787
+tailscale funnel status
+```
+
+표시된 `https://...ts.net` 주소 뒤에 `/api`를 붙인 값을 GitHub 저장소의 **Settings → Secrets and variables → Actions → Variables**에서 `VITE_API_URL`로 등록합니다. 예: `https://wordlens.example.ts.net/api`. 이후 `main` 브랜치를 다시 배포하면 GitHub Pages의 로그인 화면이 해당 서버에 연결됩니다.
 
 ## 테스트와 빌드
 
@@ -65,7 +100,7 @@ pnpm preview
 ```
 
 - `pnpm lint`: React·TypeScript 정적 코드 검사
-- `pnpm test`: 단어 추출, IndexedDB CRUD·퀴즈 통계, JSON/CSV 왕복, 주요 UI 흐름 테스트
+- `pnpm test`: 브라우저 기능 테스트와 서버 인증·사용자 격리 API 테스트
 - `pnpm build`: TypeScript 검사 후 `dist` 프로덕션 파일 생성
 - `pnpm preview`: 프로덕션 빌드를 로컬에서 확인
 
@@ -77,7 +112,9 @@ pnpm preview
 4. **Actions** 탭에서 `GitHub Pages 배포` 워크플로가 완료될 때까지 기다립니다.
 5. 완료된 작업의 `deploy` 단계 또는 **Settings → Pages**에 표시된 주소로 접속합니다.
 
-`.github/workflows/deploy.yml`이 설치, 자동 테스트, 빌드, Pages 업로드를 수행합니다. 별도 Secret이나 환경변수는 필요하지 않습니다.
+`.github/workflows/deploy.yml`이 설치, 자동 테스트, 빌드, Pages 업로드를 수행합니다. 로그인 기능을 배포하려면 Actions 변수 `VITE_API_URL`에 Tailscale Funnel API 주소를 등록해야 합니다. 이 주소는 공개 접속 주소이므로 Secret이 아니며, 인증은 각 사용자의 로그인 토큰으로 처리합니다.
+
+GitHub의 프로젝트 Pages는 같은 사용자 아래의 다른 저장소 Pages와 Origin을 공유합니다. 로그인 토큰은 탭 단위로만 보관하지만, 같은 탭에서 신뢰할 수 없는 다른 Pages 앱을 열지 말고 다른 프로젝트에도 신뢰할 수 있는 스크립트만 배포하세요.
 
 ### 경로와 새로고침 대응
 

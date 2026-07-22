@@ -3,8 +3,21 @@ import { AppHeader, type AppTab } from './components/AppHeader'
 import { DictionaryView } from './components/DictionaryView'
 import { PhotoAddView } from './components/PhotoAddView'
 import { QuizView } from './components/QuizView'
+import { AuthDialog } from './components/AuthDialog'
 import { Toast, type ToastKind, type ToastMessage } from './components/Toast'
-import { getAll, recordQuizResult } from './lib/db'
+import {
+  getAll,
+  getLocalVocabulary,
+  importLocalVocabularyToServer,
+  recordQuizResult,
+} from './lib/storage'
+import {
+  getAuthSession,
+  logoutAccount,
+  restoreSession,
+  subscribeAuth,
+  type AuthSession,
+} from './lib/auth'
 import { useLocalSpeech } from './hooks/useLocalSpeech'
 import type { QuizResult, WordEntry } from './types'
 
@@ -20,7 +33,14 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [storageError, setStorageError] = useState('')
   const [toast, setToast] = useState<ToastMessage | null>(null)
+  const [session, setSession] = useState<AuthSession | null>(() => getAuthSession())
+  const [authReady, setAuthReady] = useState(false)
+  const [authOpen, setAuthOpen] = useState(false)
+  const [localWordCount, setLocalWordCount] = useState(0)
+  const [localImportDismissed, setLocalImportDismissed] = useState(false)
+  const [importingLocal, setImportingLocal] = useState(false)
   const toastTimerRef = useRef<number | null>(null)
+  const loadRequestRef = useRef(0)
   const {
     available: speechAvailable,
     loading: speechLoading,
@@ -34,26 +54,71 @@ export default function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 4200)
   }, [])
 
+  const storageScope = session ? `server:${session.user.id}` : 'local'
+
   const loadEntries = useCallback(async () => {
+    const requestId = ++loadRequestRef.current
     try {
       const stored = await getAll()
+      if (requestId !== loadRequestRef.current) return
       setEntries(stored)
       setStorageError('')
-    } catch {
+    } catch (error) {
+      if (requestId !== loadRequestRef.current) return
       setStorageError(
-        '브라우저 저장소를 열지 못했어요. 시크릿 모드를 종료하거나 저장 공간 설정을 확인해 주세요.',
+        session
+          ? error instanceof Error
+            ? error.message
+            : '개인 서버에 연결하지 못했어요. 서버 PC가 켜져 있는지 확인해 주세요.'
+          : '브라우저 저장소를 열지 못했어요. 시크릿 모드를 종료하거나 저장 공간 설정을 확인해 주세요.',
       )
     } finally {
-      setLoading(false)
+      if (requestId === loadRequestRef.current) setLoading(false)
     }
-  }, [])
+  }, [session])
 
   useEffect(() => {
+    setEntries([])
+    setLoading(true)
+    setStorageError('')
+    setLocalImportDismissed(false)
     void loadEntries()
-    return () => {
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-    }
   }, [loadEntries])
+
+  useEffect(() => {
+    const unsubscribe = subscribeAuth(setSession)
+    void restoreSession()
+      .catch((error) => {
+        notify(
+          error instanceof Error ? error.message : '로그인 상태를 확인하지 못했어요.',
+          'error',
+        )
+      })
+      .finally(() => setAuthReady(true))
+    return unsubscribe
+  }, [notify])
+
+  useEffect(() => {
+    if (!session) {
+      setLocalWordCount(0)
+      return
+    }
+    let cancelled = false
+    void getLocalVocabulary()
+      .then(({ entries: localEntries }) => {
+        if (!cancelled) setLocalWordCount(localEntries.length)
+      })
+      .catch(() => {
+        if (!cancelled) setLocalWordCount(0)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [session])
+
+  useEffect(() => () => {
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+  }, [])
 
   useEffect(() => {
     document.title = `${tabTitles[activeTab]} · WordLens`
@@ -64,6 +129,8 @@ export default function App() {
   const changeTab = (tab: AppTab) => {
     setActiveTab(tab)
   }
+
+  const closeAuth = useCallback(() => setAuthOpen(false), [])
 
   const speakWord = (word: string) => {
     if (!speak(word)) {
@@ -89,10 +156,81 @@ export default function App() {
     )
   }
 
+  const handleAuthenticated = (nextSession: AuthSession, mode: 'login' | 'register') => {
+    setSession(nextSession)
+    notify(
+      mode === 'register'
+        ? `${nextSession.user.username} 계정을 만들고 로그인했어요.`
+        : `${nextSession.user.username}(으)로 로그인했어요.`,
+      'success',
+    )
+  }
+
+  const handleLogout = async () => {
+    const username = session?.user.username
+    try {
+      await logoutAccount()
+      notify(`${username ?? '계정'}에서 로그아웃했어요.`, 'success')
+    } catch {
+      notify('서버 연결은 끊겼지만 이 브라우저에서는 로그아웃했어요.', 'info')
+    }
+  }
+
+  const importLocalWords = async () => {
+    if (!window.confirm(
+      `이 브라우저에 저장된 ${localWordCount}개 단어와 폴더를 ${session?.user.username} 계정에 합칠까요? 로컬 원본은 삭제하지 않습니다.`,
+    )) return
+
+    setImportingLocal(true)
+    try {
+      const result = await importLocalVocabularyToServer()
+      await loadEntries()
+      setLocalImportDismissed(true)
+      notify(
+        `${result.added.length}개 단어를 서버 단어장으로 가져왔어요.${result.duplicates.length ? ` 중복 ${result.duplicates.length}개는 건너뛰었어요.` : ''}`,
+        'success',
+      )
+    } catch (error) {
+      notify(error instanceof Error ? error.message : '로컬 단어를 가져오지 못했어요.', 'error')
+    } finally {
+      setImportingLocal(false)
+    }
+  }
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">본문으로 바로가기</a>
-      <AppHeader activeTab={activeTab} wordCount={entries.length} onTabChange={changeTab} />
+      <AppHeader
+        activeTab={activeTab}
+        wordCount={entries.length}
+        onTabChange={changeTab}
+        user={session?.user ?? null}
+        authReady={authReady}
+        onOpenAuth={() => setAuthOpen(true)}
+        onLogout={() => void handleLogout()}
+      />
+
+      {session && localWordCount > 0 && !localImportDismissed ? (
+        <div className="sync-banner" role="status">
+          <div>
+            <strong>이 브라우저에 로컬 단어 {localWordCount}개가 남아 있어요.</strong>
+            <span>원하면 현재 로그인한 서버 단어장에 안전하게 합칠 수 있습니다.</span>
+          </div>
+          <div className="sync-banner-actions">
+            <button type="button" className="text-button" onClick={() => setLocalImportDismissed(true)}>
+              닫기
+            </button>
+            <button
+              type="button"
+              className="button button-primary"
+              disabled={importingLocal}
+              onClick={() => void importLocalWords()}
+            >
+              {importingLocal ? '가져오는 중…' : '서버로 가져오기'}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {storageError ? (
         <div className="global-error" role="alert">
@@ -104,10 +242,11 @@ export default function App() {
 
       <main id="main-content" tabIndex={-1}>
         {activeTab === 'photo' ? (
-          <PhotoAddView entries={entries} onWordsAdded={handleWordsAdded} notify={notify} />
+          <PhotoAddView key={storageScope} entries={entries} onWordsAdded={handleWordsAdded} notify={notify} />
         ) : null}
         {activeTab === 'dictionary' ? (
           <DictionaryView
+            key={storageScope}
             entries={entries}
             loading={loading}
             speechAvailable={speechAvailable}
@@ -118,6 +257,7 @@ export default function App() {
         ) : null}
         {activeTab === 'quiz' ? (
           <QuizView
+            key={storageScope}
             entries={entries}
             onRate={handleQuizRate}
             onSpeak={speakWord}
@@ -129,11 +269,20 @@ export default function App() {
       <footer className="app-footer">
         <div>
           <span className="footer-brand">WordLens</span>
-          <p>사진과 단어는 브라우저 안에서만 처리·저장됩니다.</p>
+          <p>
+            {session
+              ? '사진 OCR은 브라우저에서 처리하고, 단어는 로그인한 개인 서버에 저장됩니다.'
+              : '사진과 단어는 이 브라우저 안에서만 처리·저장됩니다.'}
+          </p>
         </div>
-        <p>서버 · 광고 · API 키 없이 무료로</p>
+        <p>{session ? `${session.user.username}의 서버 단어장` : '게스트 로컬 단어장'}</p>
       </footer>
 
+      <AuthDialog
+        open={authOpen}
+        onClose={closeAuth}
+        onAuthenticated={handleAuthenticated}
+      />
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   )
