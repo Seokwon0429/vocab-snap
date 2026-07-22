@@ -2,6 +2,7 @@ export interface AuthUser {
   id: string
   username: string
   createdAt: string
+  role: 'user' | 'admin'
 }
 
 export interface AuthSession {
@@ -64,7 +65,15 @@ function readStoredSession(): AuthSession | null {
       sessionStorage.removeItem(SESSION_KEY)
       return null
     }
-    return value as AuthSession
+    return {
+      ...value,
+      user: {
+        ...value.user,
+        // Web Storage can be edited by the browser user. Only /auth/me may
+        // restore an administrator role after a reload.
+        role: 'user',
+      },
+    } as AuthSession
   } catch {
     try {
       sessionStorage.removeItem(SESSION_KEY)
@@ -200,11 +209,13 @@ export async function loginAccount(input: {
 }
 
 export async function logoutAccount(): Promise<void> {
-  try {
-    if (currentSession) {
-      await apiRequest<{ ok: boolean }>('/auth/logout', { method: 'POST' })
-    }
-  } finally {
-    updateSession(null)
-  }
+  const token = currentSession?.token
+  updateSession(null)
+  if (!token) return
+
+  await apiRequest<{ ok: boolean }>('/auth/logout', {
+    authenticated: false,
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
 }

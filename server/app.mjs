@@ -137,7 +137,12 @@ function createCorsHeaders(origin, allowedOrigins) {
 }
 
 function publicUser(user) {
-  return { id: user.id, username: user.username, createdAt: user.createdAt }
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role === 'admin' ? 'admin' : 'user',
+    createdAt: user.createdAt,
+  }
 }
 
 export function createWordLensServer(overrides = {}) {
@@ -251,6 +256,7 @@ export function createWordLensServer(overrides = {}) {
         const user = {
           id: row.id,
           username: row.username,
+          role: row.role === 'admin' ? 'admin' : 'user',
           createdAt: row.created_at,
         }
         sendJson(response, 200, issueSession(user), corsHeaders)
@@ -267,6 +273,14 @@ export function createWordLensServer(overrides = {}) {
       if (request.method === 'POST' && path === '/api/auth/logout') {
         database.deleteSession(hashSessionToken(token))
         sendJson(response, 200, { ok: true }, corsHeaders)
+        return
+      }
+
+      if (request.method === 'GET' && path === '/api/admin/stats') {
+        if (user.role !== 'admin') {
+          throw forbidden('관리자 권한이 필요합니다.')
+        }
+        sendJson(response, 200, database.getAdminStats(), corsHeaders)
         return
       }
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppHeader, type AppTab } from './components/AppHeader'
+import { AdminView } from './components/AdminView'
 import { DictionaryView } from './components/DictionaryView'
 import { PhotoAddView } from './components/PhotoAddView'
 import { QuizView } from './components/QuizView'
@@ -25,6 +26,7 @@ const tabTitles: Record<AppTab, string> = {
   photo: '사진으로 추가',
   dictionary: '내 단어장',
   quiz: '단어 퀴즈',
+  admin: '관리자 통계',
 }
 
 export default function App() {
@@ -39,6 +41,7 @@ export default function App() {
   const [localWordCount, setLocalWordCount] = useState(0)
   const [localImportDismissed, setLocalImportDismissed] = useState(false)
   const [importingLocal, setImportingLocal] = useState(false)
+  const [adminDeniedFor, setAdminDeniedFor] = useState<string | null>(null)
   const toastTimerRef = useRef<number | null>(null)
   const loadRequestRef = useRef(0)
   const {
@@ -55,6 +58,10 @@ export default function App() {
   }, [])
 
   const storageScope = session ? `server:${session.user.id}` : 'local'
+  const isAdmin = authReady
+    && session?.user.role === 'admin'
+    && adminDeniedFor !== session.user.id
+  const visibleTab = activeTab === 'admin' && !isAdmin ? 'photo' : activeTab
 
   const loadEntries = useCallback(async () => {
     const requestId = ++loadRequestRef.current
@@ -121,12 +128,21 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    document.title = `${tabTitles[activeTab]} · WordLens`
+    document.title = `${tabTitles[visibleTab]} · WordLens`
     stopSpeech()
     window.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [activeTab, stopSpeech])
+  }, [stopSpeech, visibleTab])
+
+  useEffect(() => {
+    if (activeTab === 'admin' && !isAdmin) setActiveTab('photo')
+  }, [activeTab, isAdmin])
+
+  useEffect(() => {
+    if (!session) setAdminDeniedFor(null)
+  }, [session])
 
   const changeTab = (tab: AppTab) => {
+    if (tab === 'admin' && !isAdmin) return
     setActiveTab(tab)
   }
 
@@ -176,6 +192,12 @@ export default function App() {
     }
   }
 
+  const handleAdminForbidden = useCallback(() => {
+    if (session) setAdminDeniedFor(session.user.id)
+    setActiveTab('photo')
+    notify('관리자 권한이 없습니다.', 'error')
+  }, [notify, session])
+
   const importLocalWords = async () => {
     if (!window.confirm(
       `이 브라우저에 저장된 ${localWordCount}개 단어와 폴더를 ${session?.user.username} 계정에 합칠까요? 로컬 원본은 삭제하지 않습니다.`,
@@ -201,7 +223,7 @@ export default function App() {
     <div className="app-shell">
       <a className="skip-link" href="#main-content">본문으로 바로가기</a>
       <AppHeader
-        activeTab={activeTab}
+        activeTab={visibleTab}
         wordCount={entries.length}
         onTabChange={changeTab}
         user={session?.user ?? null}
@@ -241,10 +263,10 @@ export default function App() {
       ) : null}
 
       <main id="main-content" tabIndex={-1}>
-        {activeTab === 'photo' ? (
+        {visibleTab === 'photo' ? (
           <PhotoAddView key={storageScope} entries={entries} onWordsAdded={handleWordsAdded} notify={notify} />
         ) : null}
-        {activeTab === 'dictionary' ? (
+        {visibleTab === 'dictionary' ? (
           <DictionaryView
             key={storageScope}
             entries={entries}
@@ -255,13 +277,20 @@ export default function App() {
             notify={notify}
           />
         ) : null}
-        {activeTab === 'quiz' ? (
+        {visibleTab === 'quiz' ? (
           <QuizView
             key={storageScope}
             entries={entries}
             onRate={handleQuizRate}
             onSpeak={speakWord}
             speechAvailable={speechAvailable}
+          />
+        ) : null}
+        {visibleTab === 'admin' && isAdmin && session ? (
+          <AdminView
+            key={storageScope}
+            accountId={session.user.id}
+            onForbidden={handleAdminForbidden}
           />
         ) : null}
       </main>

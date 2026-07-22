@@ -5,6 +5,7 @@ dist
 *.log
 .env.server
 server/data/*.sqlite*
+server/data/wordlens-data-view.json
 .DS_Store
 public/ocr/
 work/

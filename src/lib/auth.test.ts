@@ -7,7 +7,16 @@ const storedSession = {
     id: 'user-1',
     username: 'tester',
     createdAt: '2026-07-22T00:00:00.000Z',
+    role: 'user' as const,
   },
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((complete) => {
+    resolve = complete
+  })
+  return { promise, resolve }
 }
 
 function jsonResponse(payload: unknown, status = 200) {
@@ -59,7 +68,10 @@ describe('서버 인증 클라이언트', () => {
   })
 
   it('서버가 꺼진 경우 세션을 지우거나 로컬 모드로 바꾸지 않는다', async () => {
-    sessionStorage.setItem('wordlens-auth-session-v1', JSON.stringify(storedSession))
+    sessionStorage.setItem('wordlens-auth-session-v1', JSON.stringify({
+      ...storedSession,
+      user: { ...storedSession.user, role: 'admin' },
+    }))
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network down')))
     const auth = await import('./auth')
 
@@ -67,5 +79,31 @@ describe('서버 인증 클라이언트', () => {
       code: 'SERVER_UNREACHABLE',
     })
     expect(auth.getAuthSession()?.token).toBe('test-session-token')
+    expect(auth.getAuthSession()?.user.role).toBe('user')
+  })
+
+  it('로그아웃 요청이 지연돼도 로컬 세션을 즉시 제거한다', async () => {
+    sessionStorage.setItem('wordlens-auth-session-v1', JSON.stringify(storedSession))
+    const response = deferred<Response>()
+    const fetchMock = vi.fn().mockReturnValue(response.promise)
+    vi.stubGlobal('fetch', fetchMock)
+    const auth = await import('./auth')
+
+    const logout = auth.logoutAccount()
+
+    expect(auth.getAuthSession()).toBeNull()
+    expect(sessionStorage.getItem('wordlens-auth-session-v1')).toBeNull()
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8787/api/auth/logout',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.any(Headers),
+      }),
+    )
+    const requestHeaders = fetchMock.mock.calls[0][1]?.headers as Headers
+    expect(requestHeaders.get('Authorization')).toBe('Bearer test-session-token')
+
+    response.resolve(jsonResponse({ ok: true }))
+    await expect(logout).resolves.toBeUndefined()
   })
 })

@@ -81,6 +81,18 @@ pnpm server
 - Windows에서 직접 실행할 때는 `powershell -ExecutionPolicy Bypass -File scripts/start-wordlens-server.ps1`을 사용할 수 있습니다.
 - 백업할 때는 서버를 종료한 뒤 `server/data/wordlens.sqlite`를 다른 저장장치에 복사합니다.
 
+### 관리자 계정과 통계
+
+회원가입으로 만들어진 계정은 항상 일반 사용자입니다. 관리자 권한은 서버 PC에서 사용자 ID를 지정해 직접 부여합니다.
+
+```powershell
+pnpm server:set-role -- <userId> admin
+```
+
+권한을 회수할 때는 마지막 값을 `user`로 바꿉니다. 사용자 ID와 계정별 단어 수는 `pnpm server:data-view`로 만든 `server/data/wordlens-data-view.json`에서 확인할 수 있습니다. 이 조회 파일과 실제 SQLite DB는 Git에 포함되지 않습니다.
+
+관리자 화면에는 전체 회원·폴더·단어 수와 계정별 개수만 표시됩니다. 비밀번호, 로그인 세션, 초대 코드, 다른 사용자의 단어 내용은 표시하지 않습니다. 관리자도 일반 단어장 API에서는 본인 계정의 폴더와 단어에만 접근할 수 있습니다.
+
 외부 공개는 공유기 포트포워딩 대신 Tailscale Funnel을 권장합니다.
 
 ```powershell

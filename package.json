@@ -14,6 +14,8 @@
     "dev": "pnpm run prepare:assets && vite",
     "server": "node --env-file-if-exists=.env.server server/index.mjs",
     "server:dev": "node --env-file-if-exists=.env.server --watch server/index.mjs",
+    "server:data-view": "node --env-file-if-exists=.env.server scripts/export-database-view.mjs",
+    "server:set-role": "node --env-file-if-exists=.env.server server/set-user-role.mjs",
     "server:test": "node --test server/app.test.mjs",
     "build": "pnpm run prepare:assets && tsc -b && vite build",
     "lint": "eslint .",

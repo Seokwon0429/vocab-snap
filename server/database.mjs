@@ -13,7 +13,12 @@ import {
 
 function mapUser(row) {
   return row
-    ? { id: row.id, username: row.username, createdAt: row.created_at }
+    ? {
+        id: row.id,
+        username: row.username,
+        role: row.role === 'admin' ? 'admin' : 'user',
+        createdAt: row.created_at,
+      }
     : null
 }
 
@@ -74,53 +79,74 @@ export class WordLensDatabase {
   }
 
   #migrate() {
-    this.sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        username TEXT NOT NULL,
-        username_key TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS sessions (
-        token_hash TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        created_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS sessions_user_id ON sessions(user_id);
-      CREATE INDEX IF NOT EXISTS sessions_expires_at ON sessions(expires_at);
-      CREATE TABLE IF NOT EXISTS folders (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        normalized_name TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        UNIQUE(user_id, normalized_name)
-      );
-      CREATE INDEX IF NOT EXISTS folders_user_id ON folders(user_id);
-      CREATE TABLE IF NOT EXISTS words (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        word TEXT NOT NULL,
-        normalized_word TEXT NOT NULL,
-        meaning TEXT NOT NULL DEFAULT '',
-        part_of_speech TEXT NOT NULL DEFAULT '',
-        memo TEXT NOT NULL DEFAULT '',
-        folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        quiz_attempts INTEGER NOT NULL DEFAULT 0,
-        quiz_known_count INTEGER NOT NULL DEFAULT 0,
-        quiz_unknown_count INTEGER NOT NULL DEFAULT 0,
-        quiz_last_result TEXT CHECK(quiz_last_result IN ('known', 'unknown')),
-        quiz_last_reviewed_at TEXT,
-        UNIQUE(user_id, normalized_word)
-      );
-      CREATE INDEX IF NOT EXISTS words_user_id ON words(user_id);
-      CREATE INDEX IF NOT EXISTS words_user_folder ON words(user_id, folder_id);
-    `)
+    this.sqlite.exec('BEGIN IMMEDIATE')
+    try {
+      this.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL,
+          username_key TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'admin')),
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS sessions (
+          token_hash TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS sessions_user_id ON sessions(user_id);
+        CREATE INDEX IF NOT EXISTS sessions_expires_at ON sessions(expires_at);
+        CREATE TABLE IF NOT EXISTS folders (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          normalized_name TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(user_id, normalized_name)
+        );
+        CREATE INDEX IF NOT EXISTS folders_user_id ON folders(user_id);
+        CREATE TABLE IF NOT EXISTS words (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          word TEXT NOT NULL,
+          normalized_word TEXT NOT NULL,
+          meaning TEXT NOT NULL DEFAULT '',
+          part_of_speech TEXT NOT NULL DEFAULT '',
+          memo TEXT NOT NULL DEFAULT '',
+          folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          quiz_attempts INTEGER NOT NULL DEFAULT 0,
+          quiz_known_count INTEGER NOT NULL DEFAULT 0,
+          quiz_unknown_count INTEGER NOT NULL DEFAULT 0,
+          quiz_last_result TEXT CHECK(quiz_last_result IN ('known', 'unknown')),
+          quiz_last_reviewed_at TEXT,
+          UNIQUE(user_id, normalized_word)
+        );
+        CREATE INDEX IF NOT EXISTS words_user_id ON words(user_id);
+        CREATE INDEX IF NOT EXISTS words_user_folder ON words(user_id, folder_id);
+      `)
+
+      const userColumns = this.sqlite.prepare('PRAGMA table_info(users)').all()
+      if (!userColumns.some((column) => column.name === 'role')) {
+        this.sqlite.exec(`
+          ALTER TABLE users
+          ADD COLUMN role TEXT NOT NULL DEFAULT 'user'
+          CHECK(role IN ('user', 'admin'))
+        `)
+      }
+      this.sqlite.exec('COMMIT')
+    } catch (error) {
+      try {
+        this.sqlite.exec('ROLLBACK')
+      } catch {
+        // The transaction may already have been rolled back by SQLite.
+      }
+      throw error
+    }
   }
 
   #prepare() {
@@ -133,6 +159,25 @@ export class WordLensDatabase {
       ),
       findUserById: this.sqlite.prepare('SELECT * FROM users WHERE id = ?'),
       countUsers: this.sqlite.prepare('SELECT COUNT(*) AS count FROM users'),
+      updateUserRoleById: this.sqlite.prepare(
+        'UPDATE users SET role = ? WHERE id = ?',
+      ),
+      getAdminTotals: this.sqlite.prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM users) AS user_count,
+          (SELECT COUNT(*) FROM folders) AS folder_count,
+          (SELECT COUNT(*) FROM words) AS word_count
+      `),
+      getAdminUsers: this.sqlite.prepare(`
+        SELECT
+          users.id AS user_id,
+          users.username,
+          users.created_at,
+          (SELECT COUNT(*) FROM folders WHERE folders.user_id = users.id) AS folder_count,
+          (SELECT COUNT(*) FROM words WHERE words.user_id = users.id) AS word_count
+        FROM users
+        ORDER BY users.created_at ASC, users.id ASC
+      `),
       insertSession: this.sqlite.prepare(
         'INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)',
       ),
@@ -238,6 +283,42 @@ export class WordLensDatabase {
 
   countUsers() {
     return Number(this.statements.countUsers.get().count)
+  }
+
+  setUserRoleById(userId, role) {
+    const normalizedRole = typeof role === 'string' ? role.trim().toLowerCase() : ''
+    if (normalizedRole !== 'user' && normalizedRole !== 'admin') {
+      throw new TypeError('Role must be either user or admin.')
+    }
+
+    const normalizedUserId = typeof userId === 'string' ? userId.trim() : ''
+    if (!normalizedUserId) throw new TypeError('User ID is required.')
+
+    return this.transaction(() => {
+      const result = this.statements.updateUserRoleById.run(normalizedRole, normalizedUserId)
+      if (Number(result.changes) === 0) {
+        throw notFound('USER_NOT_FOUND', '사용자를 찾을 수 없습니다.')
+      }
+      return mapUser(this.statements.findUserById.get(normalizedUserId))
+    })
+  }
+
+  getAdminStats() {
+    const totals = this.statements.getAdminTotals.get()
+    return {
+      summary: {
+        totalUserCount: Number(totals.user_count),
+        totalFolderCount: Number(totals.folder_count),
+        totalWordCount: Number(totals.word_count),
+      },
+      users: this.statements.getAdminUsers.all().map((row) => ({
+        userId: row.user_id,
+        username: row.username,
+        createdAt: row.created_at,
+        folderCount: Number(row.folder_count),
+        wordCount: Number(row.word_count),
+      })),
+    }
   }
 
   findUserForLogin(usernameKey) {

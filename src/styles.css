@@ -2558,6 +2558,155 @@ input[type="checkbox"] {
   min-width: 120px;
 }
 
+/* Admin */
+
+.admin-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 22px;
+  gap: 16px;
+}
+
+.admin-summary-card {
+  display: grid;
+  min-height: 148px;
+  padding: 22px;
+  align-content: space-between;
+  grid-template-columns: 1fr auto;
+  color: var(--green-dark);
+}
+
+.admin-summary-card span {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.admin-summary-card strong {
+  grid-column: 1 / -1;
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 36px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+
+.admin-state {
+  display: flex;
+  min-height: 260px;
+  padding: 32px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  color: var(--muted);
+  gap: 13px;
+  text-align: center;
+}
+
+.admin-state p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.admin-state-error {
+  color: var(--danger);
+}
+
+.admin-users-panel {
+  overflow: hidden;
+}
+
+.admin-users-heading {
+  display: flex;
+  min-height: 92px;
+  padding: 20px 24px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  gap: 20px;
+}
+
+.admin-users-heading .eyebrow {
+  margin-bottom: 7px;
+}
+
+.admin-users-heading h2 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+
+.admin-users-heading > span {
+  display: inline-flex;
+  min-width: 52px;
+  min-height: 31px;
+  padding: 0 10px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--green-dark);
+  background: var(--green-pale);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.admin-table-scroll {
+  overflow-x: auto;
+}
+
+.admin-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.admin-table th {
+  color: var(--muted);
+  background: var(--surface-soft);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+}
+
+.admin-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.admin-table tbody tr:hover {
+  background: rgba(239, 245, 240, 0.6);
+}
+
+.admin-user-id {
+  max-width: 260px;
+  color: #607069;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.admin-username {
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.admin-empty-row {
+  height: 130px;
+  color: var(--muted);
+  text-align: center !important;
+}
+
 @keyframes fade-in {
   from { opacity: 0; }
 }
@@ -3302,6 +3451,15 @@ input[type="checkbox"] {
     display: none;
   }
 
+  .admin-summary-grid {
+    gap: 10px;
+  }
+
+  .admin-summary-card {
+    min-height: 130px;
+    padding: 17px;
+  }
+
   .page,
   .quiz-view {
     padding-top: 40px;
@@ -3495,6 +3653,10 @@ input[type="checkbox"] {
     grid-template-columns: repeat(3, 1fr);
   }
 
+  .main-nav.has-admin {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .account-chip {
     max-width: 82px;
     padding: 0 8px;
@@ -3507,6 +3669,18 @@ input[type="checkbox"] {
   .login-button {
     width: 38px;
     padding: 0;
+  }
+
+  .admin-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-summary-card {
+    min-height: 112px;
+  }
+
+  .admin-users-heading {
+    padding: 17px;
   }
 
   .sync-banner {

@@ -1,7 +1,17 @@
-import { BookOpen, Camera, GraduationCap, LoaderCircle, LogIn, LogOut, UserRound } from 'lucide-react'
+import {
+  BookOpen,
+  Camera,
+  GraduationCap,
+  LoaderCircle,
+  LogIn,
+  LogOut,
+  ShieldCheck,
+  UserRound,
+  type LucideIcon,
+} from 'lucide-react'
 import type { AuthUser } from '../lib/auth'
 
-export type AppTab = 'photo' | 'dictionary' | 'quiz'
+export type AppTab = 'photo' | 'dictionary' | 'quiz' | 'admin'
 
 interface AppHeaderProps {
   activeTab: AppTab
@@ -13,11 +23,13 @@ interface AppHeaderProps {
   onLogout: () => void
 }
 
-const navItems = [
-  { id: 'photo' as const, label: '사진으로 추가', icon: Camera },
-  { id: 'dictionary' as const, label: '내 단어장', icon: BookOpen },
-  { id: 'quiz' as const, label: '퀴즈', icon: GraduationCap },
+const navItems: Array<{ id: AppTab; label: string; icon: LucideIcon }> = [
+  { id: 'photo', label: '사진으로 추가', icon: Camera },
+  { id: 'dictionary', label: '내 단어장', icon: BookOpen },
+  { id: 'quiz', label: '퀴즈', icon: GraduationCap },
 ]
+
+const adminNavItem = { id: 'admin' as const, label: '관리자', icon: ShieldCheck }
 
 export function AppHeader({
   activeTab,
@@ -28,6 +40,11 @@ export function AppHeader({
   onOpenAuth,
   onLogout,
 }: AppHeaderProps) {
+  const canViewAdmin = authReady && user?.role === 'admin'
+  const visibleNavItems = canViewAdmin
+    ? [...navItems, adminNavItem]
+    : navItems
+
   return (
     <header className="app-header">
       <div className="header-inner">
@@ -47,8 +64,11 @@ export function AppHeader({
         </button>
 
         <div className="header-actions">
-          <nav className="main-nav" aria-label="주요 메뉴">
-            {navItems.map(({ id, label, icon: Icon }) => (
+          <nav
+            className={`main-nav ${canViewAdmin ? 'has-admin' : ''}`}
+            aria-label="주요 메뉴"
+          >
+            {visibleNavItems.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
                 type="button"
