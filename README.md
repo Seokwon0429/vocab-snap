@@ -81,6 +81,16 @@ pnpm server
 - Windows에서 직접 실행할 때는 `powershell -ExecutionPolicy Bypass -File scripts/start-wordlens-server.ps1`을 사용할 수 있습니다.
 - 백업할 때는 서버를 종료한 뒤 `server/data/wordlens.sqlite`를 다른 저장장치에 복사합니다.
 
+### Windows 서버 관리자
+
+바탕화면의 **WordLens 서버 관리자** 바로가기 또는 프로젝트 루트의 `WordLens-Server-Manager.vbs`를 더블클릭하면 콘솔 창 없이 서버 관리자 창이 열립니다. 표시되는 Windows 관리자 권한 요청을 승인하면 다음 작업을 버튼으로 처리할 수 있습니다.
+
+- 서버 상태와 로컬 API 응답 확인
+- 서버 켜기, 끄기, 재시작
+- WordLens 사이트와 서버 데이터 폴더 열기
+
+관리자 창을 닫아도 서버는 계속 실행됩니다. 서버를 실제로 끄려면 창 안의 **서버 끄기** 버튼을 사용합니다. 이 프로그램은 정확히 `WordLens Server` 예약 작업만 제어하며 다른 Node.js 프로세스나 Tailscale 설정은 변경하지 않습니다.
+
 ### 관리자 계정과 통계
 
 회원가입으로 만들어진 계정은 항상 일반 사용자입니다. 관리자 권한은 서버 PC에서 사용자 ID를 지정해 직접 부여합니다.
