@@ -4,15 +4,21 @@
   "version": "1.0.0",
   "packageManager": "pnpm@11.9.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "prepare:ocr": "node scripts/prepare-ocr-assets.mjs",
     "prepare:dictionary": "node scripts/prepare-korean-dictionary.mjs",
     "prepare:assets": "node scripts/prepare-ocr-assets.mjs && node scripts/prepare-korean-dictionary.mjs",
     "dev": "pnpm run prepare:assets && vite",
+    "server": "node --env-file-if-exists=.env.server server/index.mjs",
+    "server:dev": "node --env-file-if-exists=.env.server --watch server/index.mjs",
+    "server:test": "node --test server/app.test.mjs",
     "build": "pnpm run prepare:assets && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run && pnpm run server:test"
   },
   "dependencies": {
     "react": "latest",

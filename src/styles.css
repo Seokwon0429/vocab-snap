@@ -188,6 +188,88 @@ img {
   gap: 4px;
 }
 
+.header-actions,
+.auth-controls {
+  display: flex;
+  align-items: center;
+}
+
+.header-actions {
+  gap: 12px;
+}
+
+.auth-controls {
+  min-width: 88px;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.login-button,
+.auth-icon-button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  color: var(--green-dark);
+  background: rgba(255, 255, 255, 0.82);
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.login-button {
+  padding: 0 12px;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.auth-icon-button {
+  width: 38px;
+  padding: 0;
+}
+
+.login-button:hover,
+.auth-icon-button:hover {
+  border-color: #9db3a4;
+  background: var(--green-pale);
+  transform: translateY(-1px);
+}
+
+.account-chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 150px;
+  min-height: 38px;
+  padding: 0 10px;
+  align-items: center;
+  border: 1px solid #cedbd1;
+  border-radius: 999px;
+  color: var(--green-dark);
+  background: var(--green-pale);
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.account-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-loading {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  color: var(--muted);
+}
+
+.spin-icon {
+  animation: spin 800ms linear infinite;
+}
+
 .nav-button {
   position: relative;
   display: inline-flex;
@@ -2416,6 +2498,66 @@ input[type="checkbox"] {
   gap: 8px;
 }
 
+.auth-modal {
+  width: min(480px, 100%);
+}
+
+.auth-modal-header .eyebrow {
+  margin-bottom: 7px;
+}
+
+.auth-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 20px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.auth-mode-tabs button {
+  min-height: 39px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.auth-mode-tabs button.is-active {
+  color: var(--green-dark);
+  background: white;
+  box-shadow: var(--shadow-sm);
+}
+
+.auth-form-grid {
+  display: grid;
+  gap: 15px;
+}
+
+.auth-error {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #efcccc;
+  border-radius: 10px;
+  color: #9a4545;
+  background: var(--danger-soft);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.auth-privacy-note {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.auth-modal-actions .button-primary {
+  min-width: 120px;
+}
+
 @keyframes fade-in {
   from { opacity: 0; }
 }
@@ -2846,6 +2988,48 @@ input[type="checkbox"] {
 
 /* Global messages and footer */
 
+.sync-banner {
+  display: flex;
+  width: min(1180px, calc(100% - 40px));
+  min-height: 64px;
+  margin: 14px auto -24px;
+  padding: 11px 13px 11px 16px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #c8dacd;
+  border-radius: 14px;
+  color: var(--green-dark);
+  background: #edf5ef;
+  gap: 18px;
+}
+
+.sync-banner > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.sync-banner strong {
+  font-size: 12px;
+}
+
+.sync-banner span {
+  color: var(--ink-soft);
+  font-size: 10px;
+}
+
+.sync-banner-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 13px;
+}
+
+.sync-banner-actions .button {
+  min-height: 39px;
+  padding: 0 13px;
+  font-size: 11px;
+}
+
 .global-error {
   display: flex;
   width: min(1180px, calc(100% - 40px));
@@ -3086,6 +3270,18 @@ input[type="checkbox"] {
     gap: 10px;
   }
 
+  .header-actions {
+    gap: 6px;
+  }
+
+  .auth-controls {
+    min-width: auto;
+  }
+
+  .account-chip {
+    max-width: 94px;
+  }
+
   .brand-copy small {
     display: none;
   }
@@ -3284,6 +3480,12 @@ input[type="checkbox"] {
     flex-direction: column;
   }
 
+  .header-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .brand {
     align-self: center;
   }
@@ -3291,6 +3493,31 @@ input[type="checkbox"] {
   .main-nav {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .account-chip {
+    max-width: 82px;
+    padding: 0 8px;
+  }
+
+  .login-button span {
+    display: none;
+  }
+
+  .login-button {
+    width: 38px;
+    padding: 0;
+  }
+
+  .sync-banner {
+    width: calc(100% - 28px);
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .sync-banner-actions {
+    justify-content: flex-end;
   }
 
   .nav-button {

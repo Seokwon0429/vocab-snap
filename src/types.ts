@@ -10,7 +10,7 @@ export interface WordQuizStats {
   lastReviewedAt: string | null
 }
 
-/** A word stored in IndexedDB. Dates are ISO-8601 strings. */
+/** A word stored in the active local or server persistence layer. Dates are ISO-8601 strings. */
 export interface WordEntry {
   id: string
   word: string
@@ -41,7 +41,7 @@ export interface WordEntryInput {
   quizStats?: Partial<WordQuizStats>
 }
 
-/** A user-created vocabulary folder stored in IndexedDB. */
+/** A user-created vocabulary folder stored in the active persistence layer. */
 export interface VocabularyFolder {
   id: string
   name: string

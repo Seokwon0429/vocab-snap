@@ -31,7 +31,7 @@ import {
   moveWordsToFolder,
   put,
   renameFolder,
-} from '../lib/db'
+} from '../lib/storage'
 import { downloadExport, parseImportFile } from '../lib/importExport'
 import { enrichWithKoreanDefinitions } from '../lib/koreanDictionary'
 import { calculateDictionaryColumnWidths } from '../lib/dictionaryLayout'

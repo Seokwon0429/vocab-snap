@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { addMany } from '../lib/db'
+import { addMany } from '../lib/storage'
 import {
   enrichWithKoreanDefinitions,
   lookupKoreanDefinitions,
@@ -20,8 +20,8 @@ vi.mock('../lib/wordCorrection', async (importOriginal) => ({
   suggestCorrectionsForWords: vi.fn(),
 }))
 
-vi.mock('../lib/db', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../lib/db')>(),
+vi.mock('../lib/storage', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../lib/storage')>(),
   addMany: vi.fn(),
 }))
 

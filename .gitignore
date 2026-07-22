@@ -3,6 +3,8 @@ dist
 .vite
 *.local
 *.log
+.env.server
+server/data/*.sqlite*
 .DS_Store
 public/ocr/
 work/
