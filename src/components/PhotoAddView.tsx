@@ -735,7 +735,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
       )
       setLiveMessage(`붙여넣은 텍스트에서 영어 단어 ${reviewWords.length}개를 찾았어요.`)
       notify(
-        `붙여넣은 텍스트에서 영어 단어 ${reviewWords.length}개${pastedMeanings.size > 0 ? `와 뜻 ${pastedMeanings.size}개` : ''}를 찾았어요.${parsed.truncated ? ' 너무 긴 내용은 앞부분 500개 후보까지만 분석했어요.' : ''}`,
+        `붙여넣은 텍스트에서 영어 단어 ${reviewWords.length}개${pastedMeanings.size > 0 ? `와 뜻 ${pastedMeanings.size}개` : ''}를 찾았어요.${parsed.truncated ? ' 너무 긴 내용은 앞부분 2,000개 후보까지만 분석했어요.' : ''}`,
         'success',
       )
     } catch (textError) {
@@ -1397,7 +1397,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                 maxLength={120_000}
                 autoFocus
               />
-              <small>{pastedText.length.toLocaleString()}자 · 고유 영어 단어 최대 500개</small>
+              <small>{pastedText.length.toLocaleString()}자 · 고유 영어 단어 최대 2,000개</small>
             </label>
           )}
 

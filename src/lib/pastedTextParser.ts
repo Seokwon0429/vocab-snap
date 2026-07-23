@@ -5,7 +5,7 @@ import {
 } from './wordExtraction'
 
 const MAX_TEXT_LENGTH = 100_000
-const MAX_CANDIDATES = 500
+const MAX_CANDIDATES = 2_000
 
 const PART_OF_SPEECH: Readonly<Record<string, string>> = {
   n: '명사',
