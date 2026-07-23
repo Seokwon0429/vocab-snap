@@ -1,11 +1,12 @@
 import {
   extractEnglishWords,
   isPlausibleEnglishWord,
-  normalizeEnglishWord,
+  normalizeEnglishText,
 } from './wordExtraction'
 
 const MAX_TEXT_LENGTH = 100_000
 const MAX_CANDIDATES = 2_000
+const MAX_TERM_WORDS = 8
 
 const PART_OF_SPEECH: Readonly<Record<string, string>> = {
   n: '명사',
@@ -36,8 +37,31 @@ export interface PastedTextParseResult {
 
 function removeListMarker(line: string): string {
   return line
-    .replace(/^\s*(?:[-*•▪◦]\s+|\d{1,5}[.)]\s*)/u, '')
+    .replace(/^\s*(?:[-*•▪◦]\s+|\d{1,5}(?:[.)])?\s+)/u, '')
     .trim()
+}
+
+export function normalizePastedEnglishTerm(value: string): string {
+  return normalizeEnglishText(value).trim().replace(/\s+/gu, ' ')
+}
+
+export function isPlausiblePastedEnglishTerm(value: string): boolean {
+  const term = normalizePastedEnglishTerm(value)
+  if (!term || term.length > 120) return false
+
+  const words = term.split(' ')
+  if (words.length > MAX_TERM_WORDS) return false
+
+  return words.every((word) => {
+    if (words.length > 1 && /^[a-z]$/u.test(word)) return true
+    if (words.length > 1 && /^-[a-z]+$/u.test(word)) {
+      return isPlausibleEnglishWord(word.slice(1))
+    }
+    if (isPlausibleEnglishWord(word)) return true
+
+    const withoutDiacritics = word.normalize('NFKD').replace(/\p{Mark}/gu, '')
+    return withoutDiacritics !== word && isPlausibleEnglishWord(withoutDiacritics)
+  })
 }
 
 function parsePair(line: string): PastedTextCandidate | null {
@@ -47,13 +71,13 @@ function parsePair(line: string): PastedTextCandidate | null {
 
   const left = match[1].trim()
   const headword = left.match(
-    /^([A-Za-z]+(?:['’-][A-Za-z]+)*)(?:\s*[([]?\s*(n|noun|v|verb|adj|adjective|adv|adverb|pron|prep|conj)\.?\s*[)\]]?)?$/iu,
+    /^(-?\p{Script=Latin}+(?:['’-]\p{Script=Latin}+)*(?:\s+-?\p{Script=Latin}+(?:['’-]\p{Script=Latin}+)*)*)(?:\s*[([]?\s*(n|noun|v|verb|adj|adjective|adv|adverb|pron|prep|conj)\.?\s*[)\]]?)?$/iu,
   )
   if (!headword) return null
 
-  const word = normalizeEnglishWord(headword[1])
+  const word = normalizePastedEnglishTerm(headword[1])
   const meaning = match[2].trim()
-  if (!word || !isPlausibleEnglishWord(word) || !/[가-힣]/u.test(meaning)) return null
+  if (!isPlausiblePastedEnglishTerm(word) || !/[가-힣]/u.test(meaning)) return null
 
   return {
     word,

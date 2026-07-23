@@ -48,7 +48,11 @@ import {
   normalizeEnglishWord,
 } from '../lib/wordExtraction'
 import { parseNumberedTwoColumnVocabulary } from '../lib/numberedVocabularyLayout'
-import { parsePastedVocabularyText } from '../lib/pastedTextParser'
+import {
+  isPlausiblePastedEnglishTerm,
+  normalizePastedEnglishTerm,
+  parsePastedVocabularyText,
+} from '../lib/pastedTextParser'
 import type { ToastKind } from './Toast'
 
 interface PhotoAddViewProps {
@@ -675,17 +679,22 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
             },
           ]),
       )
+      const wordsWithoutExplicitMeanings = parsed.candidates
+        .filter((candidate) => !candidate.explicitMeaning)
+        .map((candidate) => candidate.word)
       let dictionarySuggestions = new Map<string, CorrectionSuggestion[]>()
-      try {
-        dictionarySuggestions = await suggestCorrectionsForWords(
-          reviewWords.map((word) => ({ word })),
-          { maxSuggestions: 3, knownWords: existingWords },
-        )
-      } catch {
-        notify('교정 사전을 불러오지 못했지만 결과는 직접 수정할 수 있어요.', 'info')
+      if (wordsWithoutExplicitMeanings.length > 0) {
+        try {
+          dictionarySuggestions = await suggestCorrectionsForWords(
+            wordsWithoutExplicitMeanings.map((word) => ({ word })),
+            { maxSuggestions: 3, knownWords: existingWords },
+          )
+        } catch {
+          notify('교정 사전을 불러오지 못했지만 결과는 직접 수정할 수 있어요.', 'info')
+        }
       }
 
-      const definitionWords = new Set(reviewWords)
+      const definitionWords = new Set(wordsWithoutExplicitMeanings)
       for (const suggestions of dictionarySuggestions.values()) {
         suggestions.forEach((suggestion) => definitionWords.add(normalizeEnglishWord(suggestion.word)))
       }
@@ -710,12 +719,24 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
             ))
             .slice(0, 3)
           const needsReview = !existingWords.has(word) && suggestions.length > 0
-          const meaningReview = meaningReviewForWord(
-            word,
-            pastedMeanings.get(word),
-            definitionResult.definitions.get(word),
-            crossSwappedWords.has(word),
-          )
+          const pastedMeaning = pastedMeanings.get(word)
+          const dictionaryMeaning = definitionResult.definitions.get(word)
+          const meaningReview: MeaningReviewFields = pastedMeaning
+            ? {
+                meaning: pastedMeaning.meaning.trim(),
+                partOfSpeech: pastedMeaning.partOfSpeech.trim(),
+                dictionaryMeaning: dictionaryMeaning?.meaning.trim() ?? '',
+                dictionaryPartOfSpeech: dictionaryMeaning?.partOfSpeech.trim() ?? '',
+                meaningCandidate: pastedMeaning,
+                meaningSpacingCorrected: false,
+                meaningState: 'confirmed',
+              }
+            : meaningReviewForWord(
+                word,
+                undefined,
+                dictionaryMeaning,
+                crossSwappedWords.has(word),
+              )
           const needsMeaningReview = meaningStateNeedsReview(meaningReview.meaningState)
 
           return {
@@ -733,9 +754,9 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
           }
         }),
       )
-      setLiveMessage(`붙여넣은 텍스트에서 영어 단어 ${reviewWords.length}개를 찾았어요.`)
+      setLiveMessage(`붙여넣은 텍스트에서 영어 단어·표현 ${reviewWords.length}개를 찾았어요.`)
       notify(
-        `붙여넣은 텍스트에서 영어 단어 ${reviewWords.length}개${pastedMeanings.size > 0 ? `와 뜻 ${pastedMeanings.size}개` : ''}를 찾았어요.${parsed.truncated ? ' 너무 긴 내용은 앞부분 2,000개 후보까지만 분석했어요.' : ''}`,
+        `붙여넣은 텍스트에서 영어 단어·표현 ${reviewWords.length}개${pastedMeanings.size > 0 ? `와 뜻 ${pastedMeanings.size}개` : ''}를 찾았어요.${parsed.truncated ? ' 너무 긴 내용은 앞부분 2,000개 후보까지만 분석했어요.' : ''}`,
         'success',
       )
     } catch (textError) {
@@ -745,12 +766,20 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
     }
   }
 
+  const normalizeReviewWord = (value: string) => sourceMode === 'text'
+    ? normalizePastedEnglishTerm(value)
+    : normalizeEnglishWord(value)
+
+  const isPlausibleReviewWord = (value: string) => sourceMode === 'text'
+    ? isPlausiblePastedEnglishTerm(value)
+    : isPlausibleEnglishWord(value)
+
   const statusFor = (item: ReviewItem) => {
-    const normalized = normalizeEnglishWord(item.word)
-    if (item.requiresManualValidation || !isPlausibleEnglishWord(normalized)) return 'invalid' as const
+    const normalized = normalizeReviewWord(item.word)
+    if (item.requiresManualValidation || !isPlausibleReviewWord(normalized)) return 'invalid' as const
     if (existingWords.has(normalized)) return 'existing' as const
     const sameWord = reviewItems.filter(
-      (candidate) => normalizeEnglishWord(candidate.word) === normalized,
+      (candidate) => normalizeReviewWord(candidate.word) === normalized,
     )
     if (sameWord.length > 1 && sameWord[0].id !== item.id) return 'review-duplicate' as const
     return 'new' as const
@@ -787,8 +816,8 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
         const needsValidation = item.requiresManualValidation
           || previousStatus === 'invalid'
           || previousStatus === 'review-duplicate'
-          || !isPlausibleEnglishWord(normalizeEnglishWord(value))
-        const normalized = normalizeEnglishWord(value)
+          || !isPlausibleReviewWord(normalizeReviewWord(value))
+        const normalized = normalizeReviewWord(value)
         const revisedMeaning = meaningReviewAfterWordChange(
           item,
           normalized,
@@ -811,9 +840,9 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
 
   const confirmEditedCandidate = async (id: string) => {
     const item = reviewItems.find((candidate) => candidate.id === id)
-    const normalized = normalizeEnglishWord(item?.word ?? '')
-    if (!item || !isPlausibleEnglishWord(normalized)) {
-      setLiveMessage('저장할 수 있는 영어 단어 형태로 수정해 주세요.')
+    const normalized = normalizeReviewWord(item?.word ?? '')
+    if (!item || !isPlausibleReviewWord(normalized)) {
+      setLiveMessage('저장할 수 있는 영어 단어·표현 형태로 수정해 주세요.')
       return
     }
     const requestedRevision = wordRevisionRef.current.get(id) ?? 0
@@ -830,7 +859,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
     }
 
     setReviewItems((current) => current.map((candidate) => {
-      if (candidate.id !== id || normalizeEnglishWord(candidate.word) !== normalized) {
+      if (candidate.id !== id || normalizeReviewWord(candidate.word) !== normalized) {
         return candidate
       }
       const currentMeaningReview = meaningReviewAfterWordChange(
@@ -880,8 +909,8 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
   }
 
   const applySuggestion = (id: string, suggestion: string) => {
-    const normalized = normalizeEnglishWord(suggestion)
-    const validSuggestion = isPlausibleEnglishWord(normalized)
+    const normalized = normalizeReviewWord(suggestion)
+    const validSuggestion = isPlausibleReviewWord(normalized)
     const currentItem = reviewItems.find((item) => item.id === id)
     const revisedMeaning = currentItem
       ? meaningReviewAfterWordChange(
@@ -994,7 +1023,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
     const selected = reviewItems
       .filter((item) => item.selected && statusFor(item) === 'new')
       .map((item) => ({
-        word: normalizeEnglishWord(item.word),
+        word: normalizeReviewWord(item.word),
         meaning: item.meaning.trim(),
         partOfSpeech: item.partOfSpeech.trim(),
       }))
@@ -1198,7 +1227,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                       value={item.meaning}
                       onChange={(event) => updateMeaning(item.id, event.target.value)}
                       placeholder="뜻을 찾지 못했어요. 직접 입력할 수 있어요."
-                      aria-label={`${normalizeEnglishWord(item.word) || item.word} 한국어 뜻`}
+                      aria-label={`${normalizeReviewWord(item.word) || item.word} 한국어 뜻`}
                       aria-describedby={meaningNeedsReview(item) ? `meaning-help-${item.id}` : undefined}
                     />
                     {meaningNeedsReview(item) ? (
@@ -1247,7 +1276,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                 <div className="duplicate-chips">
                   {existingItems.map((item) => (
                     <div className="duplicate-chip" key={item.id}>
-                      <span lang="en">{normalizeEnglishWord(item.word) || item.word}</span>
+                      <span lang="en">{normalizeReviewWord(item.word) || item.word}</span>
                       <button type="button" onClick={() => removeReviewItem(item.id)} aria-label={`${item.word} 결과에서 삭제`}><X size={14} aria-hidden="true" /></button>
                     </div>
                   ))}
@@ -1284,7 +1313,7 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
                       <button
                         type="button"
                         className="correction-button confirm-edit-button"
-                        disabled={!isPlausibleEnglishWord(normalizeEnglishWord(item.word))}
+                        disabled={!isPlausibleReviewWord(normalizeReviewWord(item.word))}
                         onClick={() => void confirmEditedCandidate(item.id)}
                         aria-label={`${item.originalWord} 수정 확인`}
                       >
@@ -1392,12 +1421,12 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
               <textarea
                 value={pastedText}
                 onChange={(event) => setPastedText(event.target.value)}
-                placeholder={'영문 문장을 그대로 붙여넣거나\napple - 사과\nabrupt: 갑작스러운'}
+                placeholder={'영문 문장을 그대로 붙여넣거나\n0001 abroad - 해외로\n0059 apply for - ~에 지원하다'}
                 rows={12}
                 maxLength={120_000}
                 autoFocus
               />
-              <small>{pastedText.length.toLocaleString()}자 · 고유 영어 단어 최대 2,000개</small>
+              <small>{pastedText.length.toLocaleString()}자 · 고유 영어 단어·표현 최대 2,000개</small>
             </label>
           )}
 

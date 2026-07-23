@@ -873,4 +873,34 @@ describe('사진 업로드', () => {
     expect(recoveredCheckbox).toBeEnabled()
     expect(recoveredCheckbox).toBeChecked()
   })
+
+  it('점 없는 번호형 텍스트의 단어와 숙어를 뜻과 함께 저장한다', async () => {
+    addManyMock.mockResolvedValue({
+      added: [{ id: 'abroad-id' }, { id: 'apply-for-id' }] as never[],
+      duplicates: [],
+    })
+    const { container } = render(
+      <PhotoAddView entries={[]} onWordsAdded={vi.fn().mockResolvedValue(undefined)} notify={vi.fn()} />,
+    )
+
+    await userEvent.click(screen.getByRole('tab', { name: '텍스트 붙여넣기' }))
+    fireEvent.change(container.querySelector('textarea') as HTMLTextAreaElement, {
+      target: { value: '0001 abroad - 해외로\n0059 apply for - ~에 지원하다' },
+    })
+    await userEvent.click(screen.getByRole('button', { name: '붙여넣은 텍스트 분석' }))
+
+    expect(await screen.findByDisplayValue('apply for')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'apply for 한국어 뜻' }))
+      .toHaveValue('~에 지원하다')
+    expect(screen.getByRole('checkbox', { name: 'apply for 선택' })).toBeChecked()
+
+    await userEvent.click(screen.getByRole('button', { name: '선택한 2개 단어 추가' }))
+
+    await waitFor(() => {
+      expect(addManyMock).toHaveBeenCalledWith([
+        { word: 'abroad', meaning: '해외로', partOfSpeech: '' },
+        { word: 'apply for', meaning: '~에 지원하다', partOfSpeech: '' },
+      ])
+    })
+  })
 })
