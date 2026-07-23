@@ -46,6 +46,7 @@ import {
   isPlausibleEnglishWord,
   normalizeEnglishWord,
 } from '../lib/wordExtraction'
+import { parseNumberedTwoColumnVocabulary } from '../lib/numberedVocabularyLayout'
 import type { ToastKind } from './Toast'
 
 interface PhotoAddViewProps {
@@ -88,6 +89,9 @@ interface RecognitionSummary {
   passCount: number
   detectedKorean: boolean
   hiddenLowConfidenceCount: number
+  numberedVocabularyDetected: boolean
+  layoutEntryCount: number
+  excludedCandidateCount: number
 }
 
 const LOW_CONFIDENCE_THRESHOLD = 75
@@ -260,6 +264,61 @@ function confidenceEvidenceForWords(evidence: readonly OcrWordEvidence[]) {
   return { confidenceByWord, alternativesByWord, repeatedWords }
 }
 
+function boundingBoxOverlapRatio(
+  left: OcrWordEvidence['bbox'],
+  right: OcrWordEvidence['bbox'],
+) {
+  const intersectionWidth = Math.max(0, Math.min(left.x1, right.x1) - Math.max(left.x0, right.x0))
+  const intersectionHeight = Math.max(0, Math.min(left.y1, right.y1) - Math.max(left.y0, right.y0))
+  const intersectionArea = intersectionWidth * intersectionHeight
+  const leftArea = Math.max(1, (left.x1 - left.x0) * (left.y1 - left.y0))
+  const rightArea = Math.max(1, (right.x1 - right.x0) * (right.y1 - right.y0))
+  return intersectionArea / Math.min(leftArea, rightArea)
+}
+
+function mergeOverlappingWordEvidence(
+  anchor: OcrWordEvidence,
+  consolidatedEvidence: readonly OcrWordEvidence[],
+): OcrWordEvidence {
+  let bestMatch: OcrWordEvidence | undefined
+  let bestOverlap = 0
+
+  for (const candidate of consolidatedEvidence) {
+    const overlap = boundingBoxOverlapRatio(anchor.bbox, candidate.bbox)
+    const anchorArea = Math.max(1, (anchor.bbox.x1 - anchor.bbox.x0) * (anchor.bbox.y1 - anchor.bbox.y0))
+    const candidateArea = Math.max(1, (candidate.bbox.x1 - candidate.bbox.x0) * (candidate.bbox.y1 - candidate.bbox.y0))
+    const areaRatio = Math.max(anchorArea, candidateArea) / Math.min(anchorArea, candidateArea)
+    if (
+      overlap >= 0.55
+      && areaRatio <= 1.6
+      && (overlap > bestOverlap || (overlap === bestOverlap && candidate.confidence > (bestMatch?.confidence ?? 0)))
+    ) {
+      bestMatch = candidate
+      bestOverlap = overlap
+    }
+  }
+
+  if (!bestMatch) return anchor
+
+  const anchorText = anchor.text.normalize('NFKC').trim().toLocaleLowerCase('en-US')
+  const seen = new Set([anchorText])
+  const alternatives = [bestMatch.text, ...bestMatch.alternatives, ...anchor.alternatives]
+    .filter((alternative) => {
+      const comparable = alternative.normalize('NFKC').trim().toLocaleLowerCase('en-US')
+      if (!comparable || seen.has(comparable)) return false
+      seen.add(comparable)
+      return true
+    })
+    .slice(0, 3)
+
+  return {
+    ...anchor,
+    confidence: Math.max(anchor.confidence, bestMatch.confidence),
+    alternatives,
+    recoveredFromAlternatePass: false,
+  }
+}
+
 export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProps) {
   const [file, setFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState('')
@@ -353,30 +412,73 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
           contrast: 22,
         },
       })
-      const photographedMeanings = pairOcrLinesWithKoreanMeanings(result.lines ?? [])
+      const numberedVocabulary = parseNumberedTwoColumnVocabulary(result.lines ?? [])
+      let photographedMeanings = pairOcrLinesWithKoreanMeanings(result.lines ?? [])
       const extracted = extractEnglishWords(result.text, {
         existingWords,
         minLetters: 2,
       })
-      const strictWords = new Set(extracted.words)
-      let reviewWords = [...extracted.words]
-      const reviewWordSet = new Set(reviewWords)
+      const generalReviewWords = [...extracted.words]
+      const generalReviewWordSet = new Set(generalReviewWords)
       const recoveredCandidates = extractEnglishOcrCandidates(
         [...(result.candidateTexts ?? [result.text]), ...result.words.map((word) => word.text)],
         { minLetters: 2, maxDigits: 2 },
       )
       for (const candidate of recoveredCandidates) {
-        if (!reviewWordSet.has(candidate)) {
-          reviewWordSet.add(candidate)
-          reviewWords.push(candidate)
+        if (!generalReviewWordSet.has(candidate)) {
+          generalReviewWordSet.add(candidate)
+          generalReviewWords.push(candidate)
         }
+      }
+
+      let strictWords: Set<string>
+      let reviewWords: string[]
+      let activeWordEvidence: readonly OcrWordEvidence[]
+      let excludedCandidateCount = 0
+
+      if (numberedVocabulary.detected) {
+        const mergedLayoutEvidence = numberedVocabulary.entries.map((entry) => (
+          mergeOverlappingWordEvidence(entry.wordEvidence, result.words)
+        ))
+        reviewWords = numberedVocabulary.entries
+          .map((entry) => normalizeEnglishWord(entry.word))
+          .filter((word, index, words) => word && words.indexOf(word) === index)
+        strictWords = new Set(reviewWords)
+        activeWordEvidence = mergedLayoutEvidence
+        excludedCandidateCount = generalReviewWords.filter((word) => !strictWords.has(word)).length
+        photographedMeanings = new Map(
+          numberedVocabulary.entries
+            .map((entry, index) => ({ entry, wordEvidence: mergedLayoutEvidence[index] }))
+            .filter(({ entry }) => entry.meaning.trim())
+            .map(({ entry, wordEvidence }) => {
+              const relevantEvidence = [
+                entry.numberEvidence,
+                wordEvidence,
+                ...entry.meaningEvidence,
+              ]
+              return [
+                normalizeEnglishWord(entry.word),
+                {
+                  word: normalizeEnglishWord(entry.word),
+                  meaning: entry.meaning,
+                  partOfSpeech: entry.partOfSpeech,
+                  confidence: Math.min(...relevantEvidence.map((evidence) => evidence.confidence)),
+                  layoutConfidence: 'strong' as const,
+                },
+              ]
+            }),
+        )
+      } else {
+        reviewWords = generalReviewWords
+        strictWords = new Set(extracted.words)
+        activeWordEvidence = result.words
       }
 
       const {
         confidenceByWord,
         alternativesByWord,
         repeatedWords: repeatedEvidenceWords,
-      } = confidenceEvidenceForWords(result.words)
+      } = confidenceEvidenceForWords(activeWordEvidence)
       const hiddenLowConfidenceCount = reviewWords.filter((word) => {
         const confidence = confidenceByWord.get(word)
         return confidence !== undefined && confidence < MIN_VISIBLE_WORD_CONFIDENCE
@@ -395,10 +497,11 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
               : '저장할 만한 영어 단어를 찾지 못했어요. 글자가 더 선명한 사진으로 다시 시도해 주세요.',
         )
       }
-      const repeated = new Set([
-        ...extracted.duplicateWords,
-        ...repeatedEvidenceWords,
-      ])
+      const repeated = new Set(
+        numberedVocabulary.detected
+          ? repeatedEvidenceWords
+          : [...extracted.duplicateWords, ...repeatedEvidenceWords],
+      )
       let dictionarySuggestions = new Map<string, CorrectionSuggestion[]>()
 
       try {
@@ -442,6 +545,9 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
         passCount: result.passes.length,
         detectedKorean: result.detectedKorean,
         hiddenLowConfidenceCount,
+        numberedVocabularyDetected: numberedVocabulary.detected,
+        layoutEntryCount: numberedVocabulary.detected ? reviewWords.length : 0,
+        excludedCandidateCount,
       })
       setReviewItems(
         reviewWords.map((word, index) => {
@@ -490,12 +596,16 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
       )
       const recoveredCount = reviewWords.filter((word) => !strictWords.has(word)).length
       setLiveMessage(
-        recoveredCount > 0
+        numberedVocabulary.detected
+          ? `번호형 단어장으로 표제어 ${reviewWords.length}개를 구분했어요.${excludedCandidateCount > 0 ? ` 본문·파생어 후보 ${excludedCandidateCount}개는 제외했어요.` : ''}`
+          : recoveredCount > 0
           ? `다른 인식 결과와 불확실한 조각에서 ${recoveredCount}개 후보를 추가로 찾았어요.`
           : '교정이 필요한 단어와 인식 신뢰도를 확인해 주세요.',
       )
       notify(
-        `${reviewWords.length}개 영어 후보와 사진 속 뜻 ${photographedMeanings.size}개를 찾았어요.${hiddenLowConfidenceCount > 0 ? ` 인식률 20% 미만 ${hiddenLowConfidenceCount}개는 제외했어요.` : ''} 저장할 내용을 확인해 주세요.`,
+        numberedVocabulary.detected
+          ? `단어장 형식을 감지해 표제어 ${reviewWords.length}개와 사진 속 뜻 ${photographedMeanings.size}개를 찾았어요.${excludedCandidateCount > 0 ? ` 본문·파생어 후보 ${excludedCandidateCount}개는 제외했어요.` : ''}${hiddenLowConfidenceCount > 0 ? ` 인식률 20% 미만 표제어 ${hiddenLowConfidenceCount}개도 제외했어요.` : ''} 저장할 내용을 확인해 주세요.`
+          : `${reviewWords.length}개 영어 후보와 사진 속 뜻 ${photographedMeanings.size}개를 찾았어요.${hiddenLowConfidenceCount > 0 ? ` 인식률 20% 미만 ${hiddenLowConfidenceCount}개는 제외했어요.` : ''} 저장할 내용을 확인해 주세요.`,
         'success',
       )
     } catch (recognitionError) {
@@ -814,9 +924,16 @@ export function PhotoAddView({ entries, onWordsAdded, notify }: PhotoAddViewProp
             </div>
             {recognitionSummary ? (
               <div className="recognition-summary" aria-label="인식 요약">
-                <span>{recognitionSummary.detectedKorean ? '한·영 혼합 인식' : '영어 인식'}</span>
+                {recognitionSummary.numberedVocabularyDetected ? (
+                  <span>번호형 단어장 · 표제어 {recognitionSummary.layoutEntryCount}개</span>
+                ) : (
+                  <span>{recognitionSummary.detectedKorean ? '한·영 혼합 인식' : '영어 인식'}</span>
+                )}
                 <span>전체 신뢰도 {Math.round(recognitionSummary.confidence)}%</span>
                 <span>{recognitionSummary.passCount}회 비교</span>
+                {recognitionSummary.excludedCandidateCount > 0 ? (
+                  <span>본문·파생어 후보 {recognitionSummary.excludedCandidateCount}개 제외</span>
+                ) : null}
                 {recognitionSummary.hiddenLowConfidenceCount > 0 ? (
                   <span>20% 미만 {recognitionSummary.hiddenLowConfidenceCount}개 제외</span>
                 ) : null}
