@@ -24,7 +24,7 @@ interface AppHeaderProps {
 }
 
 const navItems: Array<{ id: AppTab; label: string; icon: LucideIcon }> = [
-  { id: 'photo', label: '사진으로 추가', icon: Camera },
+  { id: 'photo', label: '사진·텍스트 추가', icon: Camera },
   { id: 'dictionary', label: '내 단어장', icon: BookOpen },
   { id: 'quiz', label: '퀴즈', icon: GraduationCap },
 ]
@@ -59,7 +59,7 @@ export function AppHeader({
           </span>
           <span className="brand-copy">
             <strong>WordLens</strong>
-            <small>사진에서 시작하는 영어 습관</small>
+            <small>사진과 텍스트로 만드는 영어 습관</small>
           </span>
         </button>
 

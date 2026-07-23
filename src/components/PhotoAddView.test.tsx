@@ -6,7 +6,12 @@ import {
   enrichWithKoreanDefinitions,
   lookupKoreanDefinitions,
 } from '../lib/koreanDictionary'
-import { recognizeImageText, type OcrResult } from '../lib/ocr'
+import {
+  recognizeImageText,
+  type OcrLineEvidence,
+  type OcrResult,
+  type OcrWordEvidence,
+} from '../lib/ocr'
 import { suggestCorrectionsForWords } from '../lib/wordCorrection'
 import { PhotoAddView } from './PhotoAddView'
 
@@ -124,6 +129,201 @@ function vocabularyOcrResult(
       bbox: { x0: 10, y0: 10, x1: 220, y1: 36 },
       words: [english, korean],
     }],
+  }
+}
+
+function pageWord(
+  text: string,
+  x0: number,
+  y0: number,
+  width: number,
+  height = 20,
+  confidence = 92,
+): OcrWordEvidence {
+  return {
+    text,
+    confidence,
+    bbox: { x0, y0, x1: x0 + width, y1: y0 + height },
+    alternatives: [],
+  }
+}
+
+function pageLine(words: OcrWordEvidence[]): OcrLineEvidence {
+  return {
+    text: words.map((word) => word.text).join(' '),
+    confidence: Math.min(...words.map((word) => word.confidence)),
+    bbox: {
+      x0: Math.min(...words.map((word) => word.bbox.x0)),
+      y0: Math.min(...words.map((word) => word.bbox.y0)),
+      x1: Math.max(...words.map((word) => word.bbox.x1)),
+      y1: Math.max(...words.map((word) => word.bbox.y1)),
+    },
+    words,
+  }
+}
+
+const numberedVocabularyEntries = [
+  { number: '0001', word: 'abroad', partOfSpeech: 'adv.', meaningLines: [['해외로']] },
+  { number: '0002', word: 'abrupt', partOfSpeech: 'adj.', meaningLines: [['갑작스러운,', '뜻밖의']] },
+  { number: '0003', word: 'academic', partOfSpeech: 'adj.', meaningLines: [['학업의,', '학문적인,'], ['학구적인']] },
+  { number: '0004', word: 'acceptable', partOfSpeech: 'adj.', meaningLines: [['받아들일', '수', '있는,'], ['인정할', '만한']] },
+  { number: '0005', word: 'accommodate', partOfSpeech: 'v.', meaningLines: [['수용하다,', '맞추다']] },
+  { number: '0006', word: 'accountable', partOfSpeech: 'adj.', meaningLines: [['책임', '있는,'], ['설명할', '수', '있는']] },
+] as const
+
+const numberedVocabularyMeanings = new Map([
+  ['abroad', '해외로'],
+  ['abrupt', '갑작스러운, 뜻밖의'],
+  ['academic', '학업의, 학문적인, 학구적인'],
+  ['acceptable', '받아들일 수 있는, 인정할 만한'],
+  ['accommodate', '수용하다, 맞추다'],
+  ['accountable', '책임 있는, 설명할 수 있는'],
+])
+
+function numberedVocabularyOcrResult(): OcrResult {
+  const lines: OcrLineEvidence[] = [
+    pageLine([
+      pageWord('Duolingo', 215, 55, 82, 24),
+      pageWord('English', 305, 55, 70, 24),
+      pageWord('Test', 383, 55, 42, 24),
+    ]),
+    pageLine([
+      pageWord('기출', 215, 91, 36),
+      pageWord('보카', 257, 91, 36),
+      pageWord('표제어', 299, 91, 54),
+      pageWord('1000개', 360, 91, 60),
+    ]),
+  ]
+
+  const rightColumn: ReadonlyArray<{
+    derivatives: readonly string[]
+    example: readonly string[]
+    translation: readonly string[]
+  }> = [
+    {
+      derivatives: [],
+      example: ["I'd", 'like', 'to', 'go', 'abroad', 'someday.'],
+      translation: ['난', '언젠가', '해외로', '가고', '싶다.'],
+    },
+    {
+      derivatives: ['n.', 'abruptness', 'adv.', 'abruptly'],
+      example: ['He', 'was', 'confused', 'by', 'the', 'abrupt', 'question.'],
+      translation: ['그는', '갑작스러운', '질문에', '혼란스러웠다.'],
+    },
+    {
+      derivatives: ['n.', 'academy,', 'academia', 'adv.', 'academically'],
+      example: ['The', 'university', 'is', 'famous', 'for', 'its', 'academic', 'excellence.'],
+      translation: ['그', '대학은', '학문적', '우수성으로', '유명하다.'],
+    },
+    {
+      derivatives: ['n.', 'acceptance', 'v.', 'accept,', 'accepted,', 'accepting', 'adv.', 'acceptably'],
+      example: ['The', 'agreement', 'was', 'acceptable', 'to', 'both', 'parties.'],
+      translation: ['그', '합의는', '양', '당사자가', '받아들일', '수', '있었다.'],
+    },
+    {
+      derivatives: ['n.', 'accommodation', 'v.', 'accommodated,', 'accommodating', 'adj.', 'accommodative'],
+      example: ['The', 'government', 'failed', 'to', 'accommodate', 'young', 'people.'],
+      translation: ['정부는', '젊은이들을', '수용하는', '데', '실패했다.'],
+    },
+    {
+      derivatives: ['n.', 'accountability', 'v.', 'account,', 'accounted,', 'accounting'],
+      example: ['Should', 'parents', 'be', 'held', 'accountable', 'if', 'their', 'children', 'break', 'the', 'law?'],
+      translation: ['아이들이', '법을', '어기는', '경우에', '부모가', '책임을', '져야', '하는가?'],
+    },
+  ]
+
+  numberedVocabularyEntries.forEach((entry, index) => {
+    const y = 190 + index * 165
+    const headingWords = [
+      pageWord(entry.number, 110, y + 7, 36, 18, 95),
+      pageWord(entry.word, 153, y, Math.max(70, entry.word.length * 14), 30, 94),
+    ]
+    let derivativeX = 370
+    for (const derivative of rightColumn[index].derivatives) {
+      const width = Math.max(22, derivative.length * 9)
+      headingWords.push(pageWord(derivative, derivativeX, y + 4, width, 20, 91))
+      derivativeX += width + 8
+    }
+    lines.push(pageLine(headingWords))
+
+    entry.meaningLines.forEach((meaningTokens, meaningIndex) => {
+      const meaningY = y + 72 + meaningIndex * 25
+      const meaningWords = meaningIndex === 0
+        ? [pageWord(entry.partOfSpeech, 153, meaningY, 32, 20, 93)]
+        : []
+      let meaningX = meaningIndex === 0 ? 191 : 181
+      for (const token of meaningTokens) {
+        const width = Math.max(18, token.length * 17)
+        meaningWords.push(pageWord(token, meaningX, meaningY, width, 21, 93))
+        meaningX += width + 8
+      }
+
+      if (meaningIndex === 0) {
+        let exampleX = 370
+        for (const token of rightColumn[index].example) {
+          const width = Math.max(18, token.length * 9)
+          meaningWords.push(pageWord(token, exampleX, meaningY, width, 18, 91))
+          exampleX += width + 7
+        }
+      }
+      lines.push(pageLine(meaningWords))
+    })
+
+    let translationX = 370
+    const translationWords = rightColumn[index].translation.map((token) => {
+      const width = Math.max(18, token.length * 17)
+      const word = pageWord(token, translationX, y + 105, width, 18, 90)
+      translationX += width + 7
+      return word
+    })
+    lines.push(pageLine(translationWords))
+  })
+
+  lines.push(pageLine([pageWord('시원스쿨', 750, 1210, 85, 22), pageWord('LAB', 842, 1206, 52, 28)]))
+  const text = lines.map((line) => line.text).join('\n')
+  const words = lines.flatMap((line) => line.words)
+
+  return {
+    ...mixedOcrResult('abroad', 94),
+    text,
+    candidateTexts: [text],
+    confidence: 92,
+    words,
+    lines,
+    passes: [{
+      variant: 'balanced',
+      confidence: 92,
+      weightedWordConfidence: 92,
+      score: 90,
+      wordCount: words.length,
+      characterCount: text.length,
+    }],
+    sourceWidth: 1000,
+    sourceHeight: 1300,
+    processedWidth: 1000,
+    processedHeight: 1300,
+  }
+}
+
+function shortNumberedListOcrResult(): OcrResult {
+  const lines = [
+    pageLine([pageWord('0001', 110, 180, 36), pageWord('apple', 153, 174, 72, 30)]),
+    pageLine([pageWord('사과', 190, 240, 40)]),
+    pageLine([pageWord('0002', 110, 340, 36), pageWord('banana', 153, 334, 85, 30)]),
+    pageLine([pageWord('바나나', 190, 400, 60)]),
+  ]
+  const text = '0001 apple 사과\n0002 banana 바나나'
+  const words = lines.flatMap((line) => line.words)
+  return {
+    ...mixedOcrResult('apple', 94),
+    text,
+    candidateTexts: [text, 'orange'],
+    words,
+    lines,
+    sourceWidth: 800,
+    sourceHeight: 600,
+    processedWidth: 800,
+    processedHeight: 600,
   }
 }
 
@@ -524,5 +724,153 @@ describe('사진 업로드', () => {
 
     expect(screen.getByDisplayValue('word')).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'word 선택' })).toBeChecked()
+  })
+
+  it('번호형 2열 단어장은 표제어와 왼쪽 뜻만 검토 대상으로 제한한다', async () => {
+    const result = numberedVocabularyOcrResult()
+    recognizeMock.mockResolvedValue(result)
+    lookupMock.mockResolvedValue({
+      definitions: new Map([
+        ['abroad', { meaning: '국외로', partOfSpeech: '부사' }],
+        ['abrupt', { meaning: '갑작스러운, 뜻밖의', partOfSpeech: '형용사' }],
+        ['academic', { meaning: '학업의, 학문적인, 학구적인', partOfSpeech: '형용사' }],
+        ['acceptable', { meaning: '받아들일 수 있는, 인정할 만한', partOfSpeech: '형용사' }],
+        ['accommodate', { meaning: '수용하다, 맞추다', partOfSpeech: '동사' }],
+        ['accountable', { meaning: '책임 있는, 설명할 수 있는', partOfSpeech: '형용사' }],
+      ]),
+      unavailable: false,
+    })
+    addManyMock.mockResolvedValue({
+      added: numberedVocabularyEntries.map((entry) => ({ id: `${entry.word}-id` } as never)),
+      duplicates: [],
+    })
+    const onWordsAdded = vi.fn().mockResolvedValue(undefined)
+    const { container } = render(
+      <PhotoAddView entries={[]} onWordsAdded={onWordsAdded} notify={vi.fn()} />,
+    )
+
+    await uploadAndRecognize(container)
+    await screen.findByDisplayValue('abroad')
+
+    expect(screen.getByText('번호형 단어장 · 표제어 6개')).toBeInTheDocument()
+    expect(screen.getByText(/본문·파생어 후보 \d+개 제외/)).toBeInTheDocument()
+    expect(screen.getAllByRole('checkbox', { name: / 선택$/ })).toHaveLength(6)
+    for (const entry of numberedVocabularyEntries) {
+      expect(screen.getByDisplayValue(entry.word)).toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: `${entry.word} 한국어 뜻` }))
+        .toHaveValue(numberedVocabularyMeanings.get(entry.word))
+    }
+    for (const excluded of [
+      'duolingo',
+      'english',
+      'test',
+      'abruptness',
+      'academia',
+      'academically',
+      'acceptance',
+      'accept',
+      'accepted',
+      'accommodation',
+      'accountability',
+      'government',
+      'question',
+      'lab',
+    ]) {
+      expect(screen.queryByDisplayValue(excluded)).not.toBeInTheDocument()
+    }
+    expect(screen.queryAllByText('여러 번 발견')).toHaveLength(0)
+    expect(correctionMock).toHaveBeenCalledTimes(1)
+    expect([...correctionMock.mock.calls[0][0]].map(({ word }) => word)).toEqual(
+      numberedVocabularyEntries.map((entry) => entry.word),
+    )
+
+    const abroadCheckbox = screen.getByRole('checkbox', { name: 'abroad 선택' })
+    expect(abroadCheckbox).toBeDisabled()
+    expect(abroadCheckbox).not.toBeChecked()
+    expect(screen.getByRole('button', { name: '선택한 5개 단어 추가' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'abroad의 사진 속 한국어 뜻 사용' }))
+    expect(abroadCheckbox).toBeEnabled()
+    expect(abroadCheckbox).toBeChecked()
+
+    await userEvent.click(screen.getByRole('button', { name: '인식 문장 보기' }))
+    expect(screen.getByText((_, element) => (
+      element?.tagName === 'PRE'
+      && Boolean(element.textContent?.includes('He was confused by the abrupt question.'))
+    ))).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '선택한 6개 단어 추가' }))
+
+    await waitFor(() => {
+      expect(addManyMock).toHaveBeenCalledWith(
+        numberedVocabularyEntries.map((entry) => ({
+          word: entry.word,
+          meaning: numberedVocabularyMeanings.get(entry.word),
+          partOfSpeech: entry.partOfSpeech === 'v.'
+            ? '동사'
+            : entry.partOfSpeech === 'adv.'
+              ? '부사'
+              : '형용사',
+        })),
+      )
+    })
+    expect(onWordsAdded).toHaveBeenCalledWith(6)
+  })
+
+  it('번호형 표제어는 같은 위치의 다른 OCR 패스 신뢰도와 교정 대안을 사용한다', async () => {
+    const result = numberedVocabularyOcrResult()
+    const selectedAnchor = result.lines
+      ?.flatMap((line) => line.words)
+      .find((word) => word.text === 'abroad' && word.bbox.x0 < 300)
+    if (!selectedAnchor) throw new Error('테스트 표제어 증거가 없습니다.')
+
+    selectedAnchor.text = 'abrroad'
+    selectedAnchor.confidence = 10
+    result.words = result.words.map((word) => (
+      word === selectedAnchor
+        ? { ...word, confidence: 90, alternatives: ['abroad'] }
+        : word
+    ))
+    result.words.push({
+      text: 'intruder',
+      confidence: 99,
+      bbox: { x0: 760, y0: 140, x1: 840, y1: 162 },
+      alternatives: [],
+      recoveredFromAlternatePass: true,
+    })
+    recognizeMock.mockResolvedValue(result)
+    const { container } = render(
+      <PhotoAddView entries={[]} onWordsAdded={vi.fn()} notify={vi.fn()} />,
+    )
+
+    await uploadAndRecognize(container)
+
+    expect(await screen.findByDisplayValue('abrroad')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue('intruder')).not.toBeInTheDocument()
+    expect(screen.queryByText('20% 미만 1개 제외')).not.toBeInTheDocument()
+    expect(screen.getByText('90%')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'abrroad를 abroad로 수정' })).toBeInTheDocument()
+  })
+
+  it('번호 항목이 두 개뿐이면 일반 추출과 다른 OCR 패스 후보 회수를 유지한다', async () => {
+    recognizeMock.mockResolvedValue(shortNumberedListOcrResult())
+    const { container } = render(
+      <PhotoAddView entries={[]} onWordsAdded={vi.fn()} notify={vi.fn()} />,
+    )
+
+    await uploadAndRecognize(container)
+
+    expect(await screen.findByDisplayValue('apple')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('banana')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('orange')).toBeInTheDocument()
+    expect(screen.getByText('추가 회수 1개')).toBeInTheDocument()
+
+    const recoveredCheckbox = screen.getByRole('checkbox', { name: 'orange 선택' })
+    expect(recoveredCheckbox).toBeDisabled()
+    expect(recoveredCheckbox).not.toBeChecked()
+
+    await userEvent.click(screen.getByRole('button', { name: '원문 유지' }))
+    expect(recoveredCheckbox).toBeEnabled()
+    expect(recoveredCheckbox).toBeChecked()
   })
 })
