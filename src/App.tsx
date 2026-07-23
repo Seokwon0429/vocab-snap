@@ -23,7 +23,7 @@ import { useLocalSpeech } from './hooks/useLocalSpeech'
 import type { QuizResult, WordEntry } from './types'
 
 const tabTitles: Record<AppTab, string> = {
-  photo: '사진으로 추가',
+  photo: '사진·텍스트 추가',
   dictionary: '내 단어장',
   quiz: '단어 퀴즈',
   admin: '관리자 통계',
@@ -300,8 +300,8 @@ export default function App() {
           <span className="footer-brand">WordLens</span>
           <p>
             {session
-              ? '사진 OCR은 브라우저에서 처리하고, 단어는 로그인한 개인 서버에 저장됩니다.'
-              : '사진과 단어는 이 브라우저 안에서만 처리·저장됩니다.'}
+              ? '사진과 텍스트는 브라우저에서 분석하고, 단어는 로그인한 개인 서버에 저장됩니다.'
+              : '사진, 텍스트와 단어는 이 브라우저 안에서만 처리·저장됩니다.'}
           </p>
         </div>
         <p>{session ? `${session.user.username}의 서버 단어장` : '게스트 로컬 단어장'}</p>
