@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { WordEntry } from '../types'
@@ -35,6 +35,10 @@ describe('카드 퀴즈', () => {
         speechAvailable
       />,
     )
+
+    const startButton = screen.getByRole('button', { name: '1개로 퀴즈 시작' })
+    await waitFor(() => expect(startButton).toBeEnabled())
+    await user.click(startButton)
 
     expect(screen.queryByText('호기심이 많은')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /뜻 확인하기/ }))
