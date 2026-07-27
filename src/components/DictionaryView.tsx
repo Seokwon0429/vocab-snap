@@ -872,6 +872,7 @@ export function DictionaryView({
                       aria-label="현재 목록 전체 선택"
                     />
                   </th>
+                  <th scope="col" className="number-column">번호</th>
                   <th scope="col">단어</th>
                   <th scope="col">한국어 뜻</th>
                   <th scope="col">품사</th>
@@ -881,7 +882,7 @@ export function DictionaryView({
                 </tr>
               </thead>
               <tbody>
-                {filteredEntries.map((entry) => (
+                {filteredEntries.map((entry, index) => (
                   <tr
                     key={entry.id}
                     className={`${selectedIds.has(entry.id) ? 'is-selected' : ''} ${draggingIds.includes(entry.id) ? 'is-dragging' : ''}`}
@@ -893,6 +894,7 @@ export function DictionaryView({
                     <td className="check-column">
                       <input type="checkbox" checked={selectedIds.has(entry.id)} onChange={() => toggleSelected(entry.id)} aria-label={`${entry.word} 선택`} />
                     </td>
+                    <td className="number-column">{index + 1}</td>
                     <td>
                       <div className="word-cell">
                         <span className="drag-handle" aria-hidden="true"><GripVertical size={15} /></span>
