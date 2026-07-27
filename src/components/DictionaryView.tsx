@@ -924,14 +924,14 @@ export function DictionaryView({
           </div>
 
           <div className="word-card-list">
-            {filteredEntries.map((entry) => (
+            {filteredEntries.map((entry, index) => (
               <article
                 key={entry.id}
                 className={`word-list-card surface ${selectedIds.has(entry.id) ? 'is-selected' : ''} ${draggingIds.includes(entry.id) ? 'is-dragging' : ''}`}
                 draggable={!folderBusy}
                 onDragStart={(event) => startWordDrag(event, entry.id)}
                 onDragEnd={finishWordDrag}
-                aria-label={`${entry.word}, ${folderNameForEntry(entry)}. 드래그해 폴더로 이동할 수 있습니다.`}
+                aria-label={`${index + 1}번째 단어, ${entry.word}, ${folderNameForEntry(entry)}. 드래그해 폴더로 이동할 수 있습니다.`}
               >
                 <label className="card-checkbox">
                   <input type="checkbox" checked={selectedIds.has(entry.id)} onChange={() => toggleSelected(entry.id)} />
@@ -939,6 +939,7 @@ export function DictionaryView({
                 </label>
                 <div className="word-card-main">
                   <div className="word-card-title">
+                    <span className="word-card-number" aria-hidden="true">{index + 1}번</span>
                     <h2 lang="en">{entry.word}</h2>
                     <button type="button" className="speak-button" onClick={() => onSpeak(entry.word)} disabled={!speechAvailable} aria-label={`${entry.word} 발음 듣기`}>
                       <Volume2 size={17} aria-hidden="true" />

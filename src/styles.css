@@ -3827,6 +3827,22 @@ input[type="checkbox"] {
     gap: 7px;
   }
 
+  .word-card-number {
+    display: inline-flex;
+    min-width: 30px;
+    height: 22px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0 7px;
+    border-radius: 999px;
+    background: var(--green-soft);
+    color: var(--green-dark);
+    font-size: 10px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+
   .word-card-title h2 {
     margin: 0;
     overflow-wrap: anywhere;
