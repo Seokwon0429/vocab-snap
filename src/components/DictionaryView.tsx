@@ -938,8 +938,8 @@ export function DictionaryView({
                   <span className="sr-only">{entry.word} 선택</span>
                 </label>
                 <div className="word-card-main">
+                  <span className="word-card-number" aria-hidden="true">{index + 1}번</span>
                   <div className="word-card-title">
-                    <span className="word-card-number" aria-hidden="true">{index + 1}번</span>
                     <h2 lang="en">{entry.word}</h2>
                     <button type="button" className="speak-button" onClick={() => onSpeak(entry.word)} disabled={!speechAvailable} aria-label={`${entry.word} 발음 듣기`}>
                       <Volume2 size={17} aria-hidden="true" />
