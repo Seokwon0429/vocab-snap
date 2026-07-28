@@ -2,12 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppHeader, type AppTab } from './components/AppHeader'
 import { AdminView } from './components/AdminView'
 import { DictionaryView } from './components/DictionaryView'
+import { OfflineDictionaryView } from './components/OfflineDictionaryView'
 import { PhotoAddView } from './components/PhotoAddView'
 import { QuizView } from './components/QuizView'
 import { AuthDialog } from './components/AuthDialog'
+import { SettingsDialog } from './components/SettingsDialog'
 import { Toast, type ToastKind, type ToastMessage } from './components/Toast'
 import {
   getAll,
+  getFolders,
   getLocalVocabulary,
   importLocalVocabularyToServer,
   recordQuizResult,
@@ -20,7 +23,23 @@ import {
   type AuthSession,
 } from './lib/auth'
 import { useLocalSpeech } from './hooks/useLocalSpeech'
+import {
+  clearOfflineStudySnapshot,
+  getOfflineStudySnapshot,
+  saveOfflineStudySnapshot,
+  type OfflineStudySnapshot,
+} from './lib/offlineStudy'
 import type { QuizResult, WordEntry } from './types'
+
+const AUTO_SPEAK_STORAGE_KEY = 'wordlens-quiz-auto-speak-v1'
+
+function getInitialAutoSpeakPreference(): boolean {
+  try {
+    return window.localStorage.getItem(AUTO_SPEAK_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
 
 const tabTitles: Record<AppTab, string> = {
   photo: '사진·텍스트 추가',
@@ -38,6 +57,11 @@ export default function App() {
   const [session, setSession] = useState<AuthSession | null>(() => getAuthSession())
   const [authReady, setAuthReady] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [autoSpeak, setAutoSpeak] = useState(getInitialAutoSpeakPreference)
+  const [offlineSnapshot, setOfflineSnapshot] = useState<OfflineStudySnapshot | null>(null)
+  const [offlineSnapshotLoading, setOfflineSnapshotLoading] = useState(true)
+  const [offlineSnapshotSaving, setOfflineSnapshotSaving] = useState(false)
   const [localWordCount, setLocalWordCount] = useState(0)
   const [localImportDismissed, setLocalImportDismissed] = useState(false)
   const [importingLocal, setImportingLocal] = useState(false)
@@ -57,11 +81,26 @@ export default function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 4200)
   }, [])
 
-  const storageScope = session ? `server:${session.user.id}` : 'local'
+  const activeOfflineSnapshot = authReady
+    && !offlineSnapshotLoading
+    && !session
+    ? offlineSnapshot
+    : null
+  const offlineStudyActive = activeOfflineSnapshot !== null
+  const visibleEntries = activeOfflineSnapshot?.entries ?? entries
+  const storageScope = activeOfflineSnapshot
+    ? `offline:${activeOfflineSnapshot.savedAt}`
+    : session
+      ? `server:${session.user.id}`
+      : 'local'
   const isAdmin = authReady
     && session?.user.role === 'admin'
     && adminDeniedFor !== session.user.id
-  const visibleTab = activeTab === 'admin' && !isAdmin ? 'photo' : activeTab
+  const visibleTab = offlineStudyActive && (activeTab === 'photo' || activeTab === 'admin')
+    ? 'dictionary'
+    : activeTab === 'admin' && !isAdmin
+      ? 'photo'
+      : activeTab
 
   const loadEntries = useCallback(async () => {
     const requestId = ++loadRequestRef.current
@@ -106,6 +145,25 @@ export default function App() {
   }, [notify])
 
   useEffect(() => {
+    let cancelled = false
+    void getOfflineStudySnapshot()
+      .then((snapshot) => {
+        if (!cancelled) setOfflineSnapshot(snapshot)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          notify('이 기기에 저장된 오프라인 학습본을 열지 못했어요.', 'info')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setOfflineSnapshotLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [notify])
+
+  useEffect(() => {
     if (!session) {
       setLocalWordCount(0)
       return
@@ -134,21 +192,27 @@ export default function App() {
   }, [stopSpeech, visibleTab])
 
   useEffect(() => {
+    if (offlineStudyActive && (activeTab === 'photo' || activeTab === 'admin')) {
+      setActiveTab('dictionary')
+      return
+    }
     if (activeTab === 'admin' && !isAdmin) setActiveTab('photo')
-  }, [activeTab, isAdmin])
+  }, [activeTab, isAdmin, offlineStudyActive])
 
   useEffect(() => {
     if (!session) setAdminDeniedFor(null)
   }, [session])
 
   const changeTab = (tab: AppTab) => {
+    if (offlineStudyActive && (tab === 'photo' || tab === 'admin')) return
     if (tab === 'admin' && !isAdmin) return
     setActiveTab(tab)
   }
 
   const closeAuth = useCallback(() => setAuthOpen(false), [])
+  const closeSettings = useCallback(() => setSettingsOpen(false), [])
 
-  const speakWord = (word: string) => {
+  const speakWord = useCallback((word: string) => {
     if (!speak(word)) {
       notify(
         speechLoading
@@ -157,7 +221,16 @@ export default function App() {
         'info',
       )
     }
-  }
+  }, [notify, speak, speechLoading])
+
+  const changeAutoSpeak = useCallback((enabled: boolean) => {
+    setAutoSpeak(enabled)
+    try {
+      window.localStorage.setItem(AUTO_SPEAK_STORAGE_KEY, String(enabled))
+    } catch {
+      notify('자동 발음 설정을 이 기기에 저장하지 못했어요.', 'info')
+    }
+  }, [notify])
 
   const handleWordsAdded = async (count: number) => {
     await loadEntries()
@@ -166,6 +239,7 @@ export default function App() {
   }
 
   const handleQuizRate = async (entry: WordEntry, result: QuizResult) => {
+    if (offlineStudyActive) return
     const updated = await recordQuizResult(entry.id, result)
     setEntries((current) =>
       current.map((candidate) => (candidate.id === updated.id ? updated : candidate)),
@@ -198,6 +272,62 @@ export default function App() {
     notify('관리자 권한이 없습니다.', 'error')
   }, [notify, session])
 
+  const saveOfflineCopy = async () => {
+    if (!session) return
+
+    if (
+      offlineSnapshot
+      && offlineSnapshot.ownerId !== session.user.id
+      && !window.confirm(
+        `${offlineSnapshot.ownerUsername} 계정의 기존 기기 학습본을 ${session.user.username} 단어장으로 바꿀까요?`,
+      )
+    ) {
+      return
+    }
+
+    setOfflineSnapshotSaving(true)
+    try {
+      const [latestEntries, latestFolders] = await Promise.all([
+        getAll(),
+        getFolders(),
+      ])
+      const saved = await saveOfflineStudySnapshot({
+        ownerId: session.user.id,
+        ownerUsername: session.user.username,
+        entries: latestEntries,
+        folders: latestFolders,
+      })
+      setOfflineSnapshot(saved)
+      notify(`단어 ${saved.entries.length}개를 이 기기에 오프라인 학습본으로 저장했어요.`, 'success')
+    } catch (error) {
+      notify(
+        error instanceof Error ? error.message : '오프라인 학습본을 저장하지 못했어요.',
+        'error',
+      )
+    } finally {
+      setOfflineSnapshotSaving(false)
+    }
+  }
+
+  const clearOfflineCopy = async () => {
+    if (!offlineSnapshot) return
+    if (!window.confirm('이 기기에 저장된 오프라인 학습본을 삭제할까요? 서버 단어장은 삭제되지 않습니다.')) return
+
+    setOfflineSnapshotSaving(true)
+    try {
+      await clearOfflineStudySnapshot()
+      setOfflineSnapshot(null)
+      notify('이 기기의 오프라인 학습본을 삭제했어요.', 'success')
+    } catch (error) {
+      notify(
+        error instanceof Error ? error.message : '오프라인 학습본을 삭제하지 못했어요.',
+        'error',
+      )
+    } finally {
+      setOfflineSnapshotSaving(false)
+    }
+  }
+
   const importLocalWords = async () => {
     if (!window.confirm(
       `이 브라우저에 저장된 ${localWordCount}개 단어와 폴더를 ${session?.user.username} 계정에 합칠까요? 로컬 원본은 삭제하지 않습니다.`,
@@ -224,13 +354,27 @@ export default function App() {
       <a className="skip-link" href="#main-content">본문으로 바로가기</a>
       <AppHeader
         activeTab={visibleTab}
-        wordCount={entries.length}
+        wordCount={visibleEntries.length}
         onTabChange={changeTab}
         user={session?.user ?? null}
         authReady={authReady}
         onOpenAuth={() => setAuthOpen(true)}
         onLogout={() => void handleLogout()}
+        onOpenSettings={() => setSettingsOpen(true)}
+        offlineMode={offlineStudyActive}
       />
+
+      {activeOfflineSnapshot ? (
+        <div className="sync-banner offline-study-banner" role="status">
+          <div>
+            <strong>{activeOfflineSnapshot.ownerUsername}의 오프라인 학습본 · 단어 {activeOfflineSnapshot.entries.length}개</strong>
+            <span>로그인 없이 볼 수 있지만 수정과 퀴즈 결과는 저장되지 않습니다.</span>
+          </div>
+          <button type="button" className="text-button" onClick={() => setSettingsOpen(true)}>
+            학습본 설정
+          </button>
+        </div>
+      ) : null}
 
       {session && localWordCount > 0 && !localImportDismissed ? (
         <div className="sync-banner" role="status">
@@ -254,7 +398,7 @@ export default function App() {
         </div>
       ) : null}
 
-      {storageError ? (
+      {storageError && !offlineStudyActive ? (
         <div className="global-error" role="alert">
           <span aria-hidden="true">!</span>
           <p>{storageError}</p>
@@ -267,23 +411,36 @@ export default function App() {
           <PhotoAddView key={storageScope} entries={entries} onWordsAdded={handleWordsAdded} notify={notify} />
         ) : null}
         {visibleTab === 'dictionary' ? (
-          <DictionaryView
-            key={storageScope}
-            entries={entries}
-            loading={loading}
-            speechAvailable={speechAvailable}
-            onSpeak={speakWord}
-            onChanged={loadEntries}
-            notify={notify}
-          />
+          activeOfflineSnapshot ? (
+            <OfflineDictionaryView
+              key={storageScope}
+              entries={activeOfflineSnapshot.entries}
+              folders={activeOfflineSnapshot.folders}
+              speechAvailable={speechAvailable}
+              onSpeak={speakWord}
+            />
+          ) : (
+            <DictionaryView
+              key={storageScope}
+              entries={entries}
+              loading={loading}
+              speechAvailable={speechAvailable}
+              onSpeak={speakWord}
+              onChanged={loadEntries}
+              notify={notify}
+            />
+          )
         ) : null}
         {visibleTab === 'quiz' ? (
           <QuizView
             key={storageScope}
-            entries={entries}
+            entries={visibleEntries}
             onRate={handleQuizRate}
             onSpeak={speakWord}
             speechAvailable={speechAvailable}
+            foldersOverride={activeOfflineSnapshot?.folders}
+            autoSpeak={autoSpeak}
+            persistResults={!offlineStudyActive}
           />
         ) : null}
         {visibleTab === 'admin' && isAdmin && session ? (
@@ -301,16 +458,37 @@ export default function App() {
           <p>
             {session
               ? '사진과 텍스트는 브라우저에서 분석하고, 단어는 로그인한 개인 서버에 저장됩니다.'
-              : '사진, 텍스트와 단어는 이 브라우저 안에서만 처리·저장됩니다.'}
+              : offlineStudyActive
+                ? '이 기기의 읽기 전용 학습본입니다. 수정과 퀴즈 결과는 저장되지 않습니다.'
+                : '사진, 텍스트와 단어는 이 브라우저 안에서만 처리·저장됩니다.'}
           </p>
         </div>
-        <p>{session ? `${session.user.username}의 서버 단어장` : '게스트 로컬 단어장'}</p>
+        <p>
+          {session
+            ? `${session.user.username}의 서버 단어장`
+            : offlineStudyActive
+              ? `${activeOfflineSnapshot?.ownerUsername}의 오프라인 학습본`
+              : '게스트 로컬 단어장'}
+        </p>
       </footer>
 
       <AuthDialog
         open={authOpen}
         onClose={closeAuth}
         onAuthenticated={handleAuthenticated}
+      />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={closeSettings}
+        autoSpeak={autoSpeak}
+        onAutoSpeakChange={changeAutoSpeak}
+        speechAvailable={speechAvailable}
+        user={session?.user ?? null}
+        snapshot={offlineSnapshot}
+        snapshotLoading={offlineSnapshotLoading}
+        snapshotSaving={offlineSnapshotSaving}
+        onSaveSnapshot={() => void saveOfflineCopy()}
+        onClearSnapshot={() => void clearOfflineCopy()}
       />
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>

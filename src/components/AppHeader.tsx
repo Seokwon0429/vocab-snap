@@ -5,6 +5,7 @@ import {
   LoaderCircle,
   LogIn,
   LogOut,
+  Settings,
   ShieldCheck,
   UserRound,
   type LucideIcon,
@@ -21,6 +22,8 @@ interface AppHeaderProps {
   authReady: boolean
   onOpenAuth: () => void
   onLogout: () => void
+  onOpenSettings?: () => void
+  offlineMode?: boolean
 }
 
 const navItems: Array<{ id: AppTab; label: string; icon: LucideIcon }> = [
@@ -39,11 +42,16 @@ export function AppHeader({
   authReady,
   onOpenAuth,
   onLogout,
+  onOpenSettings,
+  offlineMode = false,
 }: AppHeaderProps) {
-  const canViewAdmin = authReady && user?.role === 'admin'
-  const visibleNavItems = canViewAdmin
-    ? [...navItems, adminNavItem]
+  const canViewAdmin = !offlineMode && authReady && user?.role === 'admin'
+  const baseNavItems = offlineMode
+    ? navItems.filter((item) => item.id !== 'photo')
     : navItems
+  const visibleNavItems = canViewAdmin
+    ? [...baseNavItems, adminNavItem]
+    : baseNavItems
 
   return (
     <header className="app-header">
@@ -51,7 +59,7 @@ export function AppHeader({
         <button
           type="button"
           className="brand"
-          onClick={() => onTabChange('photo')}
+          onClick={() => onTabChange(offlineMode ? 'dictionary' : 'photo')}
           aria-label="WordLens 홈으로 이동"
         >
           <span className="brand-mark" aria-hidden="true">
@@ -65,7 +73,7 @@ export function AppHeader({
 
         <div className="header-actions">
           <nav
-            className={`main-nav ${canViewAdmin ? 'has-admin' : ''}`}
+            className={`main-nav ${canViewAdmin ? 'has-admin' : ''} ${offlineMode ? 'is-offline' : ''}`}
             aria-label="주요 메뉴"
           >
             {visibleNavItems.map(({ id, label, icon: Icon }) => (
@@ -88,6 +96,17 @@ export function AppHeader({
           </nav>
 
           <div className="auth-controls">
+            {onOpenSettings ? (
+              <button
+                type="button"
+                className="auth-icon-button"
+                onClick={onOpenSettings}
+                aria-label="학습 설정 열기"
+                title="학습 설정"
+              >
+                <Settings size={17} aria-hidden="true" />
+              </button>
+            ) : null}
             {!authReady ? (
               <span className="auth-loading" aria-label="로그인 상태 확인 중">
                 <LoaderCircle size={17} className="spin-icon" aria-hidden="true" />

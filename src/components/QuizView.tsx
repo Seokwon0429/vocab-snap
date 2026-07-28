@@ -21,6 +21,9 @@ interface QuizViewProps {
   onRate: (entry: WordEntry, result: QuizResult) => Promise<void>
   onSpeak: (word: string) => void
   speechAvailable: boolean
+  foldersOverride?: readonly VocabularyFolder[]
+  autoSpeak?: boolean
+  persistResults?: boolean
 }
 
 interface SessionStats {
@@ -75,6 +78,9 @@ export function QuizView({
   onRate,
   onSpeak,
   speechAvailable,
+  foldersOverride,
+  autoSpeak = false,
+  persistResults = true,
 }: QuizViewProps) {
   const eligibleEntries = useMemo(
     () => entries.filter((entry) => entry.meaning.trim().length > 0),
@@ -109,8 +115,21 @@ export function QuizView({
   const [isMissedRetry, setIsMissedRetry] = useState(false)
   const previousSignatureRef = useRef(eligibleSignature)
   const ratingLockRef = useRef(false)
+  const lastAutoSpokenRef = useRef('')
+  const onSpeakRef = useRef(onSpeak)
 
   useEffect(() => {
+    onSpeakRef.current = onSpeak
+  }, [onSpeak])
+
+  useEffect(() => {
+    if (foldersOverride) {
+      setFolders([...foldersOverride])
+      setFoldersLoading(false)
+      setFolderError('')
+      return
+    }
+
     let cancelled = false
     setFoldersLoading(true)
     setFolderError('')
@@ -129,7 +148,7 @@ export function QuizView({
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [foldersOverride])
 
   const validFolderIds = useMemo(
     () => new Set(folders.map((folder) => folder.id)),
@@ -240,6 +259,21 @@ export function QuizView({
   const sessionAccuracy = sessionTotal
     ? Math.round((sessionStats.known / sessionTotal) * 100)
     : 0
+
+  useEffect(() => {
+    if (!autoSpeak) {
+      lastAutoSpokenRef.current = ''
+      return
+    }
+    if (!quizStarted || isFinished || !currentEntry || !speechAvailable) return
+
+    const autoSpeakKey = `${currentIndex}:${currentEntry.id}`
+    if (lastAutoSpokenRef.current === autoSpeakKey) return
+
+    lastAutoSpokenRef.current = autoSpeakKey
+    onSpeakRef.current(currentEntry.word)
+  }, [autoSpeak, currentEntry, currentIndex, isFinished, quizStarted, speechAvailable])
+
   const revealAnswer = useCallback(() => {
     if (!currentEntry || isRevealed || isRating) return
     setRatingError(null)
@@ -278,14 +312,16 @@ export function QuizView({
         setIsRevealed(false)
       } catch {
         setRatingError(
-          '학습 결과를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.',
+          persistResults
+            ? '학습 결과를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'
+            : '학습 결과를 처리하지 못했어요. 잠시 후 다시 시도해 주세요.',
         )
       } finally {
         ratingLockRef.current = false
         setIsRating(false)
       }
     },
-    [currentEntry, isRating, isRevealed, onRate],
+    [currentEntry, isRating, isRevealed, onRate, persistResults],
   )
 
   useEffect(() => {
@@ -343,6 +379,7 @@ export function QuizView({
     }
 
     ratingLockRef.current = false
+    lastAutoSpokenRef.current = ''
     setQueue(shuffleEntries(scopedEntries.slice(start - 1, end)))
     setCurrentIndex(0)
     setIsRevealed(false)
@@ -357,6 +394,7 @@ export function QuizView({
 
   const restartQuiz = () => {
     ratingLockRef.current = false
+    lastAutoSpokenRef.current = ''
     setQueue((current) => shuffleEntries(current))
     setCurrentIndex(0)
     setIsRevealed(false)
@@ -370,6 +408,7 @@ export function QuizView({
     if (missedEntries.length === 0) return
 
     ratingLockRef.current = false
+    lastAutoSpokenRef.current = ''
     setQueue(shuffleEntries(missedEntries))
     setCurrentIndex(0)
     setIsRevealed(false)
@@ -382,6 +421,7 @@ export function QuizView({
 
   const returnToSetup = () => {
     ratingLockRef.current = false
+    lastAutoSpokenRef.current = ''
     setQuizStarted(false)
     setQueue([])
     setCurrentIndex(0)
@@ -393,6 +433,13 @@ export function QuizView({
     setIsMissedRetry(false)
   }
 
+  const offlineResultNotice = !persistResults ? (
+    <div className="offline-readonly-note quiz-readonly-note" role="status">
+      <AlertCircle size={18} aria-hidden="true" />
+      <span><strong>오프라인 퀴즈</strong> · 이번 결과는 저장되지 않아요.</span>
+    </div>
+  ) : null
+
   if (eligibleEntries.length === 0) {
     return (
       <section className="quiz-view quiz-view--empty" aria-labelledby="quiz-title">
@@ -402,6 +449,8 @@ export function QuizView({
             <h1 id="quiz-title">단어 퀴즈</h1>
           </div>
         </div>
+
+        {offlineResultNotice}
 
         <div className="quiz-empty-state">
           <span className="quiz-empty-state__icon" aria-hidden="true">
@@ -445,6 +494,8 @@ export function QuizView({
             </p>
           </div>
         </div>
+
+        {offlineResultNotice}
 
         <form className="quiz-setup" onSubmit={startQuiz}>
           <div className="quiz-setup__heading">
@@ -565,6 +616,8 @@ export function QuizView({
           </span>
         </div>
       </div>
+
+      {offlineResultNotice}
 
       <div className="quiz-progress" aria-label="퀴즈 진행률">
         <div className="quiz-progress__labels">
@@ -767,7 +820,9 @@ export function QuizView({
         {isFinished
           ? `퀴즈 완료. 알아요 ${sessionStats.known}개, 아직 몰라요 ${sessionStats.unknown}개입니다.`
           : isRating
-            ? '학습 결과를 저장하고 있습니다.'
+            ? persistResults
+              ? '학습 결과를 저장하고 있습니다.'
+              : '학습 결과를 처리하고 있습니다.'
             : isRevealed
               ? `${currentEntry.word}의 뜻은 ${currentEntry.meaning}입니다. 알아요 또는 아직 몰라요를 선택하세요.`
               : `${queue.length}개 중 ${currentIndex + 1}번째 단어, ${currentEntry.word}입니다. 뜻을 생각한 뒤 확인하세요.`}
