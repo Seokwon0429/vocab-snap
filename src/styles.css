@@ -2966,6 +2966,7 @@ input[type="checkbox"] {
 
 .quiz-summary__actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   gap: 9px;
 }
@@ -3392,7 +3393,7 @@ input[type="checkbox"] {
 .quiz-lifetime-stats__grid {
   display: grid;
   margin: 0;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 5px;
 }
 
@@ -3911,7 +3912,7 @@ input[type="checkbox"] {
   }
 
   .quiz-lifetime-stats__grid {
-    grid-template-columns: repeat(5, minmax(54px, 1fr));
+    grid-template-columns: repeat(6, minmax(54px, 1fr));
     overflow-x: auto;
   }
 }

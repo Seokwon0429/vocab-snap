@@ -105,6 +105,8 @@ export function QuizView({
   const [ratingError, setRatingError] = useState<string | null>(null)
   const [sessionStats, setSessionStats] =
     useState<SessionStats>(EMPTY_SESSION)
+  const [missedEntries, setMissedEntries] = useState<WordEntry[]>([])
+  const [isMissedRetry, setIsMissedRetry] = useState(false)
   const previousSignatureRef = useRef(eligibleSignature)
   const ratingLockRef = useRef(false)
 
@@ -192,6 +194,8 @@ export function QuizView({
     setCurrentIndex(0)
     setIsRevealed(false)
     setSessionStats(EMPTY_SESSION)
+    setMissedEntries([])
+    setIsMissedRetry(false)
   }, [scopedEntries.length, scopedSignature, selectedFolderId])
 
   useEffect(() => {
@@ -206,23 +210,28 @@ export function QuizView({
     setIsRating(false)
     setRatingError(null)
     setSessionStats(EMPTY_SESSION)
+    setMissedEntries([])
+    setIsMissedRetry(false)
   }, [eligibleSignature])
 
-  const accumulatedStats = useMemo(() => {
-    return entries.reduce(
-      (stats, entry) => {
-        const quizStats = entry.quizStats
-        const attempts = quizStats?.attempts ?? 0
+  const vocabularyProgress = useMemo(() => {
+    const known = entries.filter(
+      (entry) => entry.quizStats.lastResult === 'known',
+    ).length
+    const unknown = entries.filter(
+      (entry) => entry.quizStats.lastResult === 'unknown',
+    ).length
+    const studied = known + unknown
+    const total = entries.length
 
-        stats.attempts += attempts
-        stats.known += quizStats?.knownCount ?? 0
-        stats.unknown += quizStats?.unknownCount ?? 0
-        if (attempts > 0) stats.studied += 1
-
-        return stats
-      },
-      { attempts: 0, known: 0, unknown: 0, studied: 0 },
-    )
+    return {
+      total,
+      studied,
+      known,
+      unknown,
+      learningRate: total ? Math.round((studied / total) * 100) : 0,
+      memorizationRate: studied ? Math.round((known / studied) * 100) : 0,
+    }
   }, [entries])
 
   const currentEntry = queue[currentIndex]
@@ -231,10 +240,6 @@ export function QuizView({
   const sessionAccuracy = sessionTotal
     ? Math.round((sessionStats.known / sessionTotal) * 100)
     : 0
-  const accumulatedAccuracy = accumulatedStats.attempts
-    ? Math.round((accumulatedStats.known / accumulatedStats.attempts) * 100)
-    : 0
-
   const revealAnswer = useCallback(() => {
     if (!currentEntry || isRevealed || isRating) return
     setRatingError(null)
@@ -258,6 +263,13 @@ export function QuizView({
 
       try {
         await onRate(currentEntry, result)
+        if (result === 'unknown') {
+          setMissedEntries((current) =>
+            current.some((entry) => entry.id === currentEntry.id)
+              ? current
+              : [...current, currentEntry],
+          )
+        }
         setSessionStats((current) => ({
           ...current,
           [result]: current[result] + 1,
@@ -337,6 +349,8 @@ export function QuizView({
     setIsRating(false)
     setRatingError(null)
     setSessionStats(EMPTY_SESSION)
+    setMissedEntries([])
+    setIsMissedRetry(false)
     setSetupError('')
     setQuizStarted(true)
   }
@@ -349,6 +363,21 @@ export function QuizView({
     setIsRating(false)
     setRatingError(null)
     setSessionStats(EMPTY_SESSION)
+    setMissedEntries([])
+  }
+
+  const retryMissedEntries = () => {
+    if (missedEntries.length === 0) return
+
+    ratingLockRef.current = false
+    setQueue(shuffleEntries(missedEntries))
+    setCurrentIndex(0)
+    setIsRevealed(false)
+    setIsRating(false)
+    setRatingError(null)
+    setSessionStats(EMPTY_SESSION)
+    setMissedEntries([])
+    setIsMissedRetry(true)
   }
 
   const returnToSetup = () => {
@@ -360,6 +389,8 @@ export function QuizView({
     setIsRating(false)
     setRatingError(null)
     setSessionStats(EMPTY_SESSION)
+    setMissedEntries([])
+    setIsMissedRetry(false)
   }
 
   if (eligibleEntries.length === 0) {
@@ -383,12 +414,8 @@ export function QuizView({
           </p>
         </div>
 
-        <AccumulatedStats
-          studied={accumulatedStats.studied}
-          attempts={accumulatedStats.attempts}
-          known={accumulatedStats.known}
-          unknown={accumulatedStats.unknown}
-          accuracy={accumulatedAccuracy}
+        <VocabularyProgressStats
+          {...vocabularyProgress}
         />
       </section>
     )
@@ -506,12 +533,8 @@ export function QuizView({
           </button>
         </form>
 
-        <AccumulatedStats
-          studied={accumulatedStats.studied}
-          attempts={accumulatedStats.attempts}
-          known={accumulatedStats.known}
-          unknown={accumulatedStats.unknown}
-          accuracy={accumulatedAccuracy}
+        <VocabularyProgressStats
+          {...vocabularyProgress}
         />
       </section>
     )
@@ -524,8 +547,10 @@ export function QuizView({
           <p className="quiz-view__eyebrow">오늘의 복습</p>
           <h1 id="quiz-title">단어 퀴즈</h1>
           <p className="quiz-view__description">
-            {selectedFolderLabel} · {rangeStart}~{rangeEnd}번 · 뜻을 떠올린 뒤
-            카드를 뒤집어 확인해 보세요.
+            {isMissedRetry
+              ? `몰랐던 단어 ${queue.length}개를 다시 섞어 복습하고 있어요.`
+              : `${selectedFolderLabel} · ${rangeStart}~${rangeEnd}번`}{' '}
+            · 뜻을 떠올린 뒤 카드를 뒤집어 확인해 보세요.
           </p>
         </div>
 
@@ -595,20 +620,30 @@ export function QuizView({
           </dl>
 
           <div className="quiz-summary__actions">
+            {missedEntries.length > 0 ? (
+              <button
+                type="button"
+                className="button button--primary quiz-summary__retry-missed"
+                onClick={retryMissedEntries}
+              >
+                <RefreshCw size={18} aria-hidden="true" />
+                몰랐던 {missedEntries.length}개만 다시 풀기
+              </button>
+            ) : null}
             <button
               type="button"
               className="button button-secondary"
               onClick={returnToSetup}
             >
-              범위 다시 선택
+              학습 끝내기
             </button>
             <button
               type="button"
-              className="button button--primary quiz-summary__restart"
+              className="button button-secondary quiz-summary__restart"
               onClick={restartQuiz}
             >
               <RefreshCw size={18} aria-hidden="true" />
-              다시 섞어서 학습하기
+              현재 단어 전체 다시 풀기
             </button>
           </div>
         </div>
@@ -738,50 +773,51 @@ export function QuizView({
               : `${queue.length}개 중 ${currentIndex + 1}번째 단어, ${currentEntry.word}입니다. 뜻을 생각한 뒤 확인하세요.`}
       </p>
 
-      <AccumulatedStats
-        studied={accumulatedStats.studied}
-        attempts={accumulatedStats.attempts}
-        known={accumulatedStats.known}
-        unknown={accumulatedStats.unknown}
-        accuracy={accumulatedAccuracy}
+      <VocabularyProgressStats
+        {...vocabularyProgress}
       />
     </section>
   )
 }
 
-interface AccumulatedStatsProps {
+interface VocabularyProgressStatsProps {
+  total: number
   studied: number
-  attempts: number
   known: number
   unknown: number
-  accuracy: number
+  learningRate: number
+  memorizationRate: number
 }
 
-function AccumulatedStats({
+function VocabularyProgressStats({
+  total,
   studied,
-  attempts,
   known,
   unknown,
-  accuracy,
-}: AccumulatedStatsProps) {
+  learningRate,
+  memorizationRate,
+}: VocabularyProgressStatsProps) {
   return (
     <section className="quiz-lifetime-stats" aria-labelledby="lifetime-stats-title">
       <div className="quiz-lifetime-stats__heading">
         <BarChart3 size={20} aria-hidden="true" />
         <div>
-          <h2 id="lifetime-stats-title">누적 학습 통계</h2>
-          <p>브라우저에 저장된 모든 퀴즈 기록이에요.</p>
+          <h2 id="lifetime-stats-title">전체 단어 학습 현황</h2>
+          <p>
+            각 단어의 최신 결과만 반영해요. 학습률은 전체 중 답한 단어,
+            암기율은 그중 알아요 비율이에요.
+          </p>
         </div>
       </div>
 
       <dl className="quiz-lifetime-stats__grid">
         <div>
-          <dt>학습한 단어</dt>
-          <dd>{studied}</dd>
+          <dt>전체 단어</dt>
+          <dd>{total}</dd>
         </div>
         <div>
-          <dt>누적 학습</dt>
-          <dd>{attempts}</dd>
+          <dt>학습한 단어</dt>
+          <dd>{studied}</dd>
         </div>
         <div>
           <dt>알아요</dt>
@@ -792,8 +828,12 @@ function AccumulatedStats({
           <dd>{unknown}</dd>
         </div>
         <div>
-          <dt>누적 기억률</dt>
-          <dd>{accuracy}%</dd>
+          <dt>학습률</dt>
+          <dd>{learningRate}%</dd>
+        </div>
+        <div>
+          <dt>암기율</dt>
+          <dd>{memorizationRate}%</dd>
         </div>
       </dl>
     </section>
