@@ -62,6 +62,24 @@ describe('가져오기와 내보내기', () => {
     expect(parsed.folders).toEqual([expect.objectContaining({ id: folder.id, name: folder.name })])
   })
 
+  it('여러 단어 표현과 악센트 문자를 JSON과 CSV에서 손실 없이 왕복한다', () => {
+    const words = ['apply for', 'by -ing', 'clichéd', 'Great Depression', 'link A with B']
+    const entries = words.map((word, index) => ({
+      ...entry,
+      id: `expression-${index}`,
+      word,
+      normalizedWord: word.toLocaleLowerCase('en-US'),
+    }))
+
+    const json = parseJsonImport(createJsonExport(entries, [folder]))
+    const csv = parseCsvImport(createCsvExport(entries, [folder]))
+
+    expect(json.rejectedCount).toBe(0)
+    expect(csv.rejectedCount).toBe(0)
+    expect(json.entries.map((item) => item.word)).toEqual(words)
+    expect(csv.entries.map((item) => item.word)).toEqual(words)
+  })
+
   it('이전 JSON 백업은 폴더 없는 단어로 가져온다', () => {
     const legacy = JSON.stringify({ schemaVersion: 1, entries: [{ word: 'legacy' }] })
     const parsed = parseJsonImport(legacy)

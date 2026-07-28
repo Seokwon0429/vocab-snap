@@ -288,9 +288,8 @@ function normalizeImportedWord(value: unknown): string | null {
     .trim()
     .replace(/[\u2018\u2019\u02bc]/g, "'")
     .replace(/[\u2010-\u2015\u2212]/g, '-')
-    .toLocaleLowerCase('en-US')
 
-  return /^[a-z]+(?:['-][a-z]+)*$/.test(word) ? word : null
+  return word && word.length <= 120 ? word : null
 }
 
 function validateEntry(
@@ -314,7 +313,7 @@ function validateEntry(
       row,
       severity: 'error',
       message:
-        '영어 단어가 비어 있거나 올바르지 않습니다. 영문자와 단어 안의 아포스트로피·하이픈만 사용할 수 있습니다.',
+        '단어 또는 표현이 비어 있거나 120자를 초과합니다.',
     })
     return null
   }
